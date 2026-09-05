@@ -2,7 +2,8 @@
 
 use buzz_core::device::DEVICE_PROTOCOL_VERSION;
 use buzz_device::{
-    generate_request_id, handle_request, DeviceRequest, DeviceService, GrantFile, ReceiptStatus,
+    fingerprint_request, generate_request_id, handle_request, DeviceRequest, DeviceService,
+    GrantFile, Journal, JournalEntry, ReceiptStatus, RequestState,
 };
 use nostr::Keys;
 use std::path::Path;
@@ -259,7 +260,14 @@ fn path_escape_is_rejected() {
         now_ms(),
     )
     .unwrap();
-    assert_ne!(outcome.receipt.status, ReceiptStatus::Succeeded);
+    assert!(
+        matches!(
+            outcome.receipt.status,
+            ReceiptStatus::Rejected | ReceiptStatus::Failed
+        ),
+        "path escape status {:?}",
+        outcome.receipt.status
+    );
     assert!(!outcome.mutated);
     assert!(!tmp.path().join("tanks").exists());
 }
@@ -374,4 +382,85 @@ fn start_session_cwd_is_checkout() {
     let _ = Command::new("kill")
         .args(["-TERM", &pid.to_string()])
         .status();
+}
+
+fn plant_executing(state_dir: &Path, req: &DeviceRequest, actor: &str) {
+    let journal = Journal::open(state_dir).unwrap();
+    journal
+        .put(&JournalEntry {
+            request_id: req.request_id.clone(),
+            fingerprint: fingerprint_request(req).unwrap(),
+            state: RequestState::Executing,
+            op: req.op.clone(),
+            actor_pubkey_hex: actor.to_string(),
+            grant_generation: req.grant_generation,
+            outcome: serde_json::Value::Null,
+            error: None,
+            params: req.params.clone(),
+        })
+        .unwrap();
+}
+
+#[test]
+fn restart_with_no_worktree_retries_once() {
+    let (tmp, service, host, owner) = setup();
+    let req = checkout_req("dev-1", "tanks/t1", "aquarium/t1");
+    plant_executing(tmp.path(), &req, &owner.public_key().to_hex());
+    service.reconcile_on_start().unwrap();
+    let outcome = handle_request(
+        &service,
+        &owner.public_key().to_hex(),
+        &host.public_key().to_hex(),
+        &req,
+        now_ms(),
+    )
+    .unwrap();
+    assert_eq!(outcome.receipt.status, ReceiptStatus::Succeeded);
+    assert!(tmp.path().join("tanks/t1/README").exists());
+    let replay = handle_request(
+        &service,
+        &owner.public_key().to_hex(),
+        &host.public_key().to_hex(),
+        &req,
+        now_ms(),
+    )
+    .unwrap();
+    assert!(!replay.mutated);
+    let count = std::fs::read_dir(tmp.path().join("tanks"))
+        .unwrap()
+        .filter(|e| e.as_ref().unwrap().path().is_dir())
+        .count();
+    assert_eq!(count, 1);
+}
+
+#[test]
+fn restart_with_existing_worktree_marks_succeeded_not_duplicate() {
+    let (tmp, service, host, owner) = setup();
+    let req = checkout_req("dev-1", "tanks/t1", "aquarium/t1");
+    let created = handle_request(
+        &service,
+        &owner.public_key().to_hex(),
+        &host.public_key().to_hex(),
+        &req,
+        now_ms(),
+    )
+    .unwrap();
+    assert_eq!(created.receipt.status, ReceiptStatus::Succeeded);
+    plant_executing(tmp.path(), &req, &owner.public_key().to_hex());
+    service.reconcile_on_start().unwrap();
+    let replay = handle_request(
+        &service,
+        &owner.public_key().to_hex(),
+        &host.public_key().to_hex(),
+        &req,
+        now_ms(),
+    )
+    .unwrap();
+    assert_eq!(replay.receipt.status, ReceiptStatus::Succeeded);
+    assert!(!replay.mutated);
+    let count = std::fs::read_dir(tmp.path().join("tanks"))
+        .unwrap()
+        .filter(|e| e.as_ref().unwrap().path().is_dir())
+        .count();
+    assert_eq!(count, 1);
 }
