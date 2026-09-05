@@ -33,6 +33,11 @@ test("Channels stay separate from Tanks; dashboard opens the canonical tank", as
   await expect(
     page.getByTestId("channel-shared-header-backdrop"),
   ).toBeVisible();
+  await waitForAnimations(page);
+  await page.screenshot({
+    path: "test-results/aquarium-proof/canonical-tank.png",
+    fullPage: true,
+  });
 });
 
 test("Tanks plus opens shared create UI with Tank selected", async ({
@@ -45,6 +50,10 @@ test("Tanks plus opens shared create UI with Tank selected", async ({
   await expect(page.getByTestId("aquarium-tank-fields")).toBeVisible();
   await expect(page.getByTestId("create-channel-template")).toHaveCount(0);
   await expect(page.getByTestId("create-tank-device-offline")).toHaveCount(0);
+  await waitForAnimations(page);
+  await page.screenshot({
+    path: "test-results/aquarium-proof/create-tank.png",
+  });
 });
 
 test("shared create dialog still exposes channel fields for Channel", async ({
@@ -57,6 +66,10 @@ test("shared create dialog still exposes channel fields for Channel", async ({
   await expect(page.getByTestId("create-channel-name")).toBeVisible();
   await expect(page.getByTestId("create-channel-template")).toBeVisible();
   await expect(page.getByTestId("aquarium-tank-fields")).toHaveCount(0);
+  await waitForAnimations(page);
+  await page.screenshot({
+    path: "test-results/aquarium-proof/create-channel-regression.png",
+  });
 });
 
 test("new tank shows Ocean; adding a saved profile creates a leader instance", async ({
@@ -73,4 +86,9 @@ test("new tank shows Ocean; adding a saved profile creates a leader instance", a
   await expect(page.getByTestId("aquarium-leader-crown")).toBeVisible();
   await expect(page.getByTestId("aquarium-ocean")).toHaveCount(0);
   await expect(page.getByTestId("message-composer")).toBeVisible();
+  await waitForAnimations(page);
+  await page.screenshot({
+    path: "test-results/aquarium-proof/ocean-leader.png",
+    fullPage: true,
+  });
 });
