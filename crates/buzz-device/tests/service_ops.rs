@@ -97,15 +97,22 @@ fn create_checkout_without_repository_id_is_rejected() {
     let (_tmp, service, host, owner) = setup();
     let mut req = checkout_req("dev-1", "tanks/t1", "aquarium/t1");
     req.params.as_object_mut().unwrap().remove("repository_id");
-    let err = handle_request(
+    let outcome = handle_request(
         &service,
         &owner.public_key().to_hex(),
         &host.public_key().to_hex(),
         &req,
         now_ms(),
     )
-    .unwrap_err();
-    assert!(err.to_string().contains("repository_id"));
+    .unwrap();
+    assert_eq!(outcome.receipt.status, ReceiptStatus::Failed);
+    assert!(!outcome.mutated);
+    assert!(outcome
+        .receipt
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("repository_id"));
 }
 
 #[test]
