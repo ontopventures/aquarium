@@ -134,6 +134,30 @@ fn json_has_secret(value: &Value, secret: &str) -> bool {
     !secret.is_empty() && encoded.contains(secret)
 }
 
+fn search_issues_native(key: &str, query: &str) -> Result<Vec<LinearIssue>, String> {
+    if is_fixture_key(key) {
+        let q = query.to_ascii_lowercase();
+        return Ok(fixture_issues()
+            .into_iter()
+            .filter(|issue| {
+                q.is_empty()
+                    || issue.title.to_ascii_lowercase().contains(&q)
+                    || issue.identifier.to_ascii_lowercase().contains(&q)
+            })
+            .collect());
+    }
+    Err("waiting for authorized Linear credentials".into())
+}
+
+fn get_issue_native(key: &str, id: &str) -> Result<Option<LinearIssue>, String> {
+    if is_fixture_key(key) {
+        return Ok(fixture_issues()
+            .into_iter()
+            .find(|issue| issue.id == id || issue.identifier == id));
+    }
+    Err("waiting for authorized Linear credentials".into())
+}
+
 /// Store a Linear personal key in the OS keyring. The key is never returned.
 #[tauri::command]
 pub fn aquarium_linear_connect(api_key: String) -> Result<LinearConnection, String> {
@@ -175,18 +199,11 @@ pub fn aquarium_linear_search_issues(query: String) -> Result<Vec<LinearIssue>, 
     let key = KeyringLinearSlot
         .load()?
         .ok_or_else(|| "linear is not connected".to_string())?;
-    if is_fixture_key(&key) {
-        let q = query.to_ascii_lowercase();
-        return Ok(fixture_issues()
-            .into_iter()
-            .filter(|issue| {
-                q.is_empty()
-                    || issue.title.to_ascii_lowercase().contains(&q)
-                    || issue.identifier.to_ascii_lowercase().contains(&q)
-            })
-            .collect());
+    let issues = search_issues_native(&key, &query)?;
+    if json_has_secret(&serde_json::to_value(&issues).unwrap_or(Value::Null), &key) {
+        return Err("linear search refused to emit a credential".into());
     }
-    Err("waiting for authorized Linear credentials".into())
+    Ok(issues)
 }
 
 /// Fetch one issue using the stored key natively.
@@ -195,12 +212,11 @@ pub fn aquarium_linear_get_issue(id: String) -> Result<Option<LinearIssue>, Stri
     let key = KeyringLinearSlot
         .load()?
         .ok_or_else(|| "linear is not connected".to_string())?;
-    if is_fixture_key(&key) {
-        return Ok(fixture_issues()
-            .into_iter()
-            .find(|issue| issue.id == id || issue.identifier == id));
+    let issue = get_issue_native(&key, &id)?;
+    if json_has_secret(&serde_json::to_value(&issue).unwrap_or(Value::Null), &key) {
+        return Err("linear get issue refused to emit a credential".into());
     }
-    Err("waiting for authorized Linear credentials".into())
+    Ok(issue)
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,6 +283,51 @@ fn relay_url() -> String {
     crate::relay::relay_ws_url()
 }
 
+fn checkout_device_request(
+    input: &DeviceCheckoutArgs,
+) -> Result<buzz_device_pkg::DeviceRequest, String> {
+    buzz_device_pkg::device_request_from_checkout(
+        &buzz_device_pkg::CreateCheckoutInput {
+            tank_id: input.tank_id.clone(),
+            device_id: input.device_id.clone(),
+            repository_id: input.repository_id.clone(),
+            branch: input.branch.clone(),
+            relpath: input.relpath.clone(),
+            request_id: input.request_id.clone(),
+        },
+        input.grant_generation,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn start_device_request(input: &DeviceStartArgs) -> Result<buzz_device_pkg::DeviceRequest, String> {
+    buzz_device_pkg::device_request_from_start(
+        &buzz_device_pkg::StartSessionInput {
+            tank_id: input.tank_id.clone(),
+            device_id: input.device_id.clone(),
+            checkout_path: input.checkout_path.clone(),
+            instance_id: input.instance_id.clone(),
+            request_id: input.request_id.clone(),
+        },
+        input.grant_generation,
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn cancel_device_request(
+    input: &DeviceCancelArgs,
+) -> Result<buzz_device_pkg::DeviceRequest, String> {
+    buzz_device_pkg::device_request_from_cancel(
+        &buzz_device_pkg::CancelSessionInput {
+            device_id: input.device_id.clone(),
+            session_id: input.session_id.clone(),
+            request_id: input.request_id.clone(),
+        },
+        input.grant_generation,
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// Inspect host capabilities over the signed device request path.
 #[tauri::command]
 pub async fn aquarium_device_inspect_capabilities(
@@ -300,18 +361,7 @@ pub async fn aquarium_device_create_checkout(
     input: DeviceCheckoutArgs,
 ) -> Result<Value, String> {
     let keys = device_keys(&state)?;
-    let request = buzz_device_pkg::device_request_from_checkout(
-        &buzz_device_pkg::CreateCheckoutInput {
-            tank_id: input.tank_id,
-            device_id: input.device_id,
-            repository_id: input.repository_id,
-            branch: input.branch,
-            relpath: input.relpath,
-            request_id: input.request_id,
-        },
-        input.grant_generation,
-    )
-    .map_err(|e| e.to_string())?;
+    let request = checkout_device_request(&input)?;
     let receipt =
         buzz_device_pkg::submit_device_request(&keys, &input.device_pubkey, &relay_url(), request)
             .await
@@ -354,17 +404,7 @@ pub async fn aquarium_device_start_session(
     input: DeviceStartArgs,
 ) -> Result<Value, String> {
     let keys = device_keys(&state)?;
-    let request = buzz_device_pkg::device_request_from_start(
-        &buzz_device_pkg::StartSessionInput {
-            tank_id: input.tank_id,
-            device_id: input.device_id,
-            checkout_path: input.checkout_path,
-            instance_id: input.instance_id,
-            request_id: input.request_id,
-        },
-        input.grant_generation,
-    )
-    .map_err(|e| e.to_string())?;
+    let request = start_device_request(&input)?;
     let receipt =
         buzz_device_pkg::submit_device_request(&keys, &input.device_pubkey, &relay_url(), request)
             .await
@@ -380,15 +420,7 @@ pub async fn aquarium_device_cancel_session(
     input: DeviceCancelArgs,
 ) -> Result<Value, String> {
     let keys = device_keys(&state)?;
-    let request = buzz_device_pkg::device_request_from_cancel(
-        &buzz_device_pkg::CancelSessionInput {
-            device_id: input.device_id,
-            session_id: input.session_id,
-            request_id: input.request_id,
-        },
-        input.grant_generation,
-    )
-    .map_err(|e| e.to_string())?;
+    let request = cancel_device_request(&input)?;
     let receipt =
         buzz_device_pkg::submit_device_request(&keys, &input.device_pubkey, &relay_url(), request)
             .await
@@ -418,10 +450,52 @@ mod tests {
         }
     }
 
+    const CALLER_REQUEST_ID: &str = "1788581600001-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn checkout_args(request_id: &str, repository_id: &str) -> DeviceCheckoutArgs {
+        DeviceCheckoutArgs {
+            tank_id: "tank-1".into(),
+            device_id: "dev-1".into(),
+            device_pubkey: "deadbeef".into(),
+            repository_id: repository_id.into(),
+            branch: "main".into(),
+            relpath: "tanks/t1".into(),
+            request_id: request_id.into(),
+            grant_generation: 1,
+        }
+    }
+
+    #[test]
+    fn no_aquarium_linear_secret_get() {
+        let commands = include_str!("aquarium.rs");
+        let production = commands
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source before tests");
+        assert!(
+            !production.contains("fn aquarium_linear_secret_get"),
+            "renderer must not have a Linear secret getter"
+        );
+        assert!(
+            !production.contains("pub fn aquarium_linear_secret_get"),
+            "renderer must not have a Linear secret getter"
+        );
+        let handler = include_str!("../lib.rs");
+        assert!(
+            !handler.contains("aquarium_linear_secret_get"),
+            "generate_handler must not register a Linear secret getter"
+        );
+        assert!(handler.contains("aquarium_linear_connect"));
+        assert!(handler.contains("aquarium_linear_connection"));
+    }
+
     #[test]
     fn linear_slot_is_not_identity_nsec() {
+        assert_eq!(LINEAR_SECRET_SLOT, "aquarium-linear-api-key");
         assert_ne!(LINEAR_SECRET_SLOT, IDENTITY_SLOT);
+        assert_eq!(IDENTITY_SLOT, "identity");
         assert!(!LINEAR_SECRET_SLOT.contains("nsec"));
+        assert!(!LINEAR_SECRET_SLOT.contains("identity"));
     }
 
     #[test]
@@ -432,6 +506,7 @@ mod tests {
         assert!(!json_has_secret(&json, key));
         assert!(conn.connected);
         assert_eq!(conn.source, "linear");
+        assert_eq!(conn.workspace_name.as_deref(), Some("Aquarium fixture"));
     }
 
     #[test]
@@ -442,13 +517,31 @@ mod tests {
         assert!(!json_has_secret(&json, key));
         assert!(!conn.connected);
         assert!(conn.message.contains("authorized"));
+        assert!(search_issues_native(key, "AQU")
+            .unwrap_err()
+            .contains("authorized"));
+        assert!(get_issue_native(key, "AQU-1")
+            .unwrap_err()
+            .contains("authorized"));
     }
 
     #[test]
     fn fixture_search_is_isolated() {
-        let issues = fixture_issues();
+        let key = "lin_fixture_isolated";
+        let issues = search_issues_native(key, "tank").unwrap();
+        assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].source, "linear");
         assert!(issues[0].identifier.starts_with("AQU-"));
+        let json = serde_json::to_value(&issues).unwrap();
+        assert!(!json_has_secret(&json, key));
+        assert!(search_issues_native(key, "unrelated-query")
+            .unwrap()
+            .is_empty());
+        let issue = get_issue_native(key, "AQU-1")
+            .unwrap()
+            .expect("fixture issue");
+        assert_eq!(issue.id, "fixture-issue-1");
+        assert!(get_issue_native(key, "missing").unwrap().is_none());
     }
 
     #[test]
@@ -458,5 +551,85 @@ mod tests {
         assert_eq!(slot.load().unwrap().as_deref(), Some("lin_fixture_x"));
         slot.delete().unwrap();
         assert!(slot.load().unwrap().is_none());
+    }
+
+    #[test]
+    fn mutating_device_requests_require_caller_request_id() {
+        let empty = checkout_device_request(&checkout_args("", "repo-1")).unwrap_err();
+        assert!(empty.contains("request_id"), "{empty}");
+
+        let invalid =
+            checkout_device_request(&checkout_args("not-a-request-id", "repo-1")).unwrap_err();
+        assert!(invalid.contains("request_id"), "{invalid}");
+
+        let start = start_device_request(&DeviceStartArgs {
+            tank_id: "tank-1".into(),
+            device_id: "dev-1".into(),
+            device_pubkey: "deadbeef".into(),
+            checkout_path: "/tmp/checkout".into(),
+            instance_id: "inst-1".into(),
+            request_id: String::new(),
+            grant_generation: 1,
+        })
+        .unwrap_err();
+        assert!(start.contains("request_id"), "{start}");
+
+        let cancel = cancel_device_request(&DeviceCancelArgs {
+            device_id: "dev-1".into(),
+            device_pubkey: "deadbeef".into(),
+            session_id: "sess-1".into(),
+            request_id: String::new(),
+            grant_generation: 1,
+        })
+        .unwrap_err();
+        assert!(cancel.contains("request_id"), "{cancel}");
+
+        let parsed: Result<DeviceCheckoutArgs, _> = serde_json::from_value(json!({
+            "tank_id": "tank-1",
+            "device_id": "dev-1",
+            "device_pubkey": "deadbeef",
+            "repository_id": "repo-1",
+            "branch": "main",
+            "relpath": "tanks/t1",
+            "grant_generation": 1
+        }));
+        assert!(
+            parsed.is_err(),
+            "createCheckout args must require request_id"
+        );
+
+        let ok = checkout_device_request(&checkout_args(CALLER_REQUEST_ID, "repo-1")).unwrap();
+        assert_eq!(ok.request_id, CALLER_REQUEST_ID);
+        let retry = checkout_device_request(&checkout_args(CALLER_REQUEST_ID, "repo-1")).unwrap();
+        assert_eq!(retry.request_id, ok.request_id);
+    }
+
+    #[test]
+    fn create_checkout_requires_repository_id() {
+        let missing = checkout_device_request(&checkout_args(CALLER_REQUEST_ID, "")).unwrap_err();
+        assert!(
+            missing.contains("repository_id") && missing.contains("relpath"),
+            "empty repository_id must not infer from relpath: {missing}"
+        );
+
+        let parsed: Result<DeviceCheckoutArgs, _> = serde_json::from_value(json!({
+            "tank_id": "tank-1",
+            "device_id": "dev-1",
+            "device_pubkey": "deadbeef",
+            "branch": "main",
+            "relpath": "tanks/t1",
+            "request_id": CALLER_REQUEST_ID,
+            "grant_generation": 1
+        }));
+        assert!(
+            parsed.is_err(),
+            "createCheckout args must require repository_id"
+        );
+
+        let ok = checkout_device_request(&checkout_args(CALLER_REQUEST_ID, "repo-1")).unwrap();
+        assert_eq!(ok.params["repository_id"], "repo-1");
+        assert_eq!(ok.params["repo_relpath"], "repo-1");
+        assert_eq!(ok.params["relpath"], "tanks/t1");
+        assert_ne!(ok.params["repository_id"], ok.params["relpath"]);
     }
 }
