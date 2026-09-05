@@ -29,6 +29,11 @@ export const KIND_JOB_PROGRESS = 43003;
 export const KIND_JOB_RESULT = 43004;
 export const KIND_JOB_CANCEL = 43005;
 export const KIND_JOB_ERROR = 43006;
+/** Aquarium device command plane. Not NIP-AO and not unused job kinds. */
+export const KIND_DEVICE_ADVERTISEMENT = 30180;
+export const KIND_DEVICE_GRANT = 30181;
+export const KIND_DEVICE_REQUEST = 43200;
+export const KIND_DEVICE_RECEIPT = 43201;
 export const KIND_FORUM_POST = 45001;
 export const KIND_FORUM_COMMENT = 45003;
 export const KIND_APPROVAL_REQUEST = 46010;

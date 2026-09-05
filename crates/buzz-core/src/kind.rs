@@ -117,6 +117,20 @@ pub const KIND_PUSH_LEASE: u32 = 30350;
 /// plus exact public projection bindings. See `docs/nips/NIP-PMA.md`.
 pub const KIND_PRIVATE_MANAGED_AGENT: u32 = 30179;
 
+/// Aquarium device advertisement (parameterized replaceable, device-authored).
+///
+/// Addressed by `(device pubkey, kind, d_tag)` where `d_tag` is the stable
+/// `device_id`. Content is a JSON capability/readiness body. Not a NIP-AO
+/// observer frame and not agent presence.
+pub const KIND_DEVICE_ADVERTISEMENT: u32 = 30180;
+
+/// Aquarium device grant (parameterized replaceable, owner-authored).
+///
+/// Addressed by `(owner pubkey, kind, d_tag)` where `d_tag` is the stable
+/// `device_id`. Local grant files remain the execution authority; this kind
+/// is the optional relay projection.
+pub const KIND_DEVICE_GRANT: u32 = 30181;
+
 /// Kinds whose stored events are readable only by their author.
 ///
 /// The relay must never reveal the existence, count, tags, content, schedule,
@@ -166,6 +180,8 @@ pub const P_GATED_KINDS: &[u32] = &[
     // readable by any unauthenticated or non-owner party, including via `ids`
     // filters — see NIP-AM §Relay Behavior.
     KIND_AGENT_TURN_METRIC,
+    KIND_DEVICE_REQUEST,
+    KIND_DEVICE_RECEIPT,
 ];
 
 /// NIP-AP: Agent Persona (parameterized replaceable, owner-authored).
@@ -527,6 +543,19 @@ pub const KIND_JOB_CANCEL: u32 = 43005;
 /// An agent job failed with an error.
 pub const KIND_JOB_ERROR: u32 = 43006;
 
+/// Aquarium device request (regular stored event, p-gated).
+///
+/// NIP-44 ciphertext addressed to the execution-host device pubkey. Tags:
+/// exactly one `p` (device), `d` (request id), `device` (device id), `op`.
+/// Distinct from job kinds 43001–43006 and from NIP-AO 24200.
+pub const KIND_DEVICE_REQUEST: u32 = 43200;
+
+/// Aquarium device receipt (regular stored event, p-gated).
+///
+/// NIP-44 ciphertext addressed to the requesting actor. Same `d` request id
+/// as the corresponding [`KIND_DEVICE_REQUEST`].
+pub const KIND_DEVICE_RECEIPT: u32 = 43201;
+
 /// Relay-signed notification: the target pubkey was added to a channel.
 /// Stored globally (channel_id = None) with p-tag = target, h-tag = channel UUID.
 pub const KIND_MEMBER_ADDED_NOTIFICATION: u32 = 44100;
@@ -659,6 +688,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_MANAGED_AGENT,
     KIND_TEAM_CATALOG,
     KIND_PRIVATE_MANAGED_AGENT,
+    KIND_DEVICE_ADVERTISEMENT,
+    KIND_DEVICE_GRANT,
     KIND_REPORT,
     KIND_PRODUCT_FEEDBACK,
     KIND_NIP29_PUT_USER,
@@ -724,6 +755,8 @@ pub const ALL_KINDS: &[u32] = &[
     KIND_JOB_RESULT,
     KIND_JOB_CANCEL,
     KIND_JOB_ERROR,
+    KIND_DEVICE_REQUEST,
+    KIND_DEVICE_RECEIPT,
     KIND_MEMBER_ADDED_NOTIFICATION,
     KIND_MEMBER_REMOVED_NOTIFICATION,
     KIND_AGENT_TURN_METRIC,

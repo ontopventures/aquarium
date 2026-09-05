@@ -41,6 +41,10 @@ abstract final class EventKind {
   static const jobResult = 43004;
   static const jobCancel = 43005;
   static const jobError = 43006;
+  static const deviceAdvertisement = 30180;
+  static const deviceGrant = 30181;
+  static const deviceRequest = 43200;
+  static const deviceReceipt = 43201;
   static const forumPost = 45001;
   static const forumComment = 45003;
   static const huddleStarted = 48100;

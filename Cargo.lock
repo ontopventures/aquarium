@@ -1130,6 +1130,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-device"
+version = "0.1.0"
+dependencies = [
+ "buzz-core",
+ "buzz-ws-client",
+ "chrono",
+ "clap",
+ "futures-util",
+ "hex",
+ "nostr 0.44.7",
+ "rand 0.10.1",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "buzz-media"
 version = "0.1.0"
 dependencies = [
