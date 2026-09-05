@@ -10,13 +10,14 @@ import {
   loadLinearKeyHostLocal,
   storeLinearKeyHostLocal,
 } from "./adapters/linearSecret";
-import { createLocalId, slugBranch } from "./lib/ids";
+import { createDeviceRequestId, createLocalId, slugBranch } from "./lib/ids";
 import { createMockState } from "./mock/fixtures";
 import type {
   AquariumState,
   ContextSection,
   CreatureInstance,
   CreatureProfile,
+  DeviceOpResult,
   LinearConnection,
   ProvisionTankInput,
   ProvisionTankResult,
@@ -48,12 +49,6 @@ export function subscribeAquarium(listener: () => void): () => void {
   };
 }
 
-export function resetAquariumStore(): void {
-  void clearLinearKeyHostLocal();
-  state = createMockState();
-  emit();
-}
-
 function bindMockAdapters(): AquariumAdapters {
   return {
     source: "mock",
@@ -67,6 +62,13 @@ function bindMockAdapters(): AquariumAdapters {
 }
 
 let adapters: AquariumAdapters = bindMockAdapters();
+
+export function resetAquariumStore(): void {
+  void clearLinearKeyHostLocal();
+  state = createMockState();
+  adapters = bindMockAdapters();
+  emit();
+}
 
 /** Test/future seam: replace mock adapters. Real adapters must keep source honest. */
 export function bindAquariumAdapters(next: AquariumAdapters): void {
@@ -154,6 +156,105 @@ export async function disconnectMockLinear() {
   return adapters.linear.disconnect();
 }
 
+function replaceTank(tank: Tank): void {
+  update((current) => ({
+    ...current,
+    tanks: current.tanks.map((item) => (item.id === tank.id ? tank : item)),
+    issues: current.issues.map((issue) =>
+      issue.id === tank.issue_id ? { ...issue, tank_id: tank.id } : issue,
+    ),
+  }));
+}
+
+function recoverTank(existing: Tank, checkout: DeviceOpResult): Tank {
+  return {
+    ...existing,
+    source: checkout.source,
+    status: "active",
+    branch: checkout.branch ?? existing.branch,
+    worktree_path: checkout.worktree_path ?? existing.worktree_path,
+    request_id: checkout.request_id ?? existing.request_id,
+    errorMessage: undefined,
+  };
+}
+
+async function applyCheckout(
+  tankId: string,
+  input: ProvisionTankInput,
+  request_id: string,
+  opts?: { replace?: boolean; createdAt?: number },
+): Promise<ProvisionTankResult> {
+  const title = input.title.trim();
+  const checkout = await adapters.device.createCheckout({
+    tank_id: tankId,
+    device_id: input.device_id,
+    repository_id: input.repository_id,
+    branch: slugBranch(title),
+    relpath: `tanks/${tankId}`,
+    request_id,
+  });
+  if (checkout.status !== "succeeded") {
+    const failed: Tank = {
+      source: checkout.source,
+      id: tankId,
+      title,
+      description: input.description,
+      status: "error",
+      issue_id: input.issue_id ?? null,
+      repository_id: input.repository_id,
+      device_id: input.device_id,
+      request_id,
+      oceanCollapsed: false,
+      errorMessage: checkout.message,
+      createdAt: opts?.createdAt ?? Date.now(),
+    };
+    if (opts?.replace) {
+      replaceTank(failed);
+    } else {
+      update((current) => ({ ...current, tanks: [...current.tanks, failed] }));
+    }
+    return {
+      ok: false,
+      source: checkout.source,
+      error: checkout.message,
+      existingTankId: tankId,
+    };
+  }
+
+  const tank: Tank = {
+    source: checkout.source,
+    id: tankId,
+    title,
+    description: input.description,
+    status: "active",
+    issue_id: input.issue_id ?? null,
+    repository_id: input.repository_id,
+    device_id: input.device_id,
+    branch: checkout.branch,
+    worktree_path: checkout.worktree_path,
+    request_id: checkout.request_id ?? request_id,
+    oceanCollapsed: false,
+    createdAt: opts?.createdAt ?? Date.now(),
+  };
+  if (opts?.replace) {
+    replaceTank(tank);
+  } else {
+    update((current) => ({
+      ...current,
+      tanks: [...current.tanks, tank],
+      issues: current.issues.map((issue) =>
+        issue.id === input.issue_id ? { ...issue, tank_id: tank.id } : issue,
+      ),
+    }));
+  }
+  return {
+    ok: true,
+    source: tank.source,
+    tank,
+    existing: Boolean(opts?.replace),
+  };
+}
+
 /**
  * Production create seam used by the shared Buzz creation dialog.
  * Does not call the channel-metadata callback.
@@ -202,7 +303,7 @@ export async function provisionTank(
       const existing = state.tanks.find(
         (tank) => tank.issue_id === input.issue_id,
       );
-      if (existing) {
+      if (existing && existing.status !== "error") {
         return {
           ok: true,
           source: existing.source,
@@ -210,59 +311,37 @@ export async function provisionTank(
           existing: true,
         };
       }
+      if (existing?.status === "error" && existing.request_id) {
+        const inspected = await adapters.device.inspectRequest(
+          existing.request_id,
+        );
+        if (inspected.status === "succeeded") {
+          const recovered = recoverTank(existing, inspected);
+          replaceTank(recovered);
+          return {
+            ok: true,
+            source: recovered.source,
+            tank: recovered,
+            existing: true,
+          };
+        }
+        return applyCheckout(
+          existing.id,
+          {
+            title: existing.title,
+            description: existing.description,
+            issue_id: existing.issue_id,
+            repository_id: existing.repository_id,
+            device_id: existing.device_id,
+          },
+          existing.request_id,
+          { replace: true, createdAt: existing.createdAt },
+        );
+      }
     }
 
     const tankId = createLocalId("tank-mock");
-    const checkout = await adapters.device.createCheckout({
-      tank_id: tankId,
-      device_id: input.device_id,
-      branch: slugBranch(title),
-      relpath: `tanks/${tankId}`,
-    });
-    if (checkout.status !== "succeeded") {
-      const failed: Tank = {
-        source: checkout.source,
-        id: tankId,
-        title,
-        description: input.description,
-        status: "error",
-        issue_id: input.issue_id ?? null,
-        repository_id: input.repository_id,
-        device_id: input.device_id,
-        oceanCollapsed: false,
-        errorMessage: checkout.message,
-        createdAt: Date.now(),
-      };
-      update((current) => ({ ...current, tanks: [...current.tanks, failed] }));
-      return {
-        ok: false,
-        source: checkout.source,
-        error: checkout.message,
-      };
-    }
-
-    const tank: Tank = {
-      source: checkout.source,
-      id: tankId,
-      title,
-      description: input.description,
-      status: "active",
-      issue_id: input.issue_id ?? null,
-      repository_id: input.repository_id,
-      device_id: input.device_id,
-      branch: checkout.branch,
-      worktree_path: checkout.worktree_path,
-      oceanCollapsed: false,
-      createdAt: Date.now(),
-    };
-    update((current) => ({
-      ...current,
-      tanks: [...current.tanks, tank],
-      issues: current.issues.map((issue) =>
-        issue.id === input.issue_id ? { ...issue, tank_id: tank.id } : issue,
-      ),
-    }));
-    return { ok: true, source: tank.source, tank, existing: false };
+    return applyCheckout(tankId, input, createDeviceRequestId());
   } finally {
     update({ provisioning: false });
   }

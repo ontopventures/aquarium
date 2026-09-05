@@ -119,9 +119,9 @@ export function LinearConnectDialog({
               Linear account security
             </a>
             . Prefer full access for every team the account can see. Restricted
-            keys only expose permitted teams. Keys are stored on this device (OS
-            keyring when the backend command exists); they are never written to
-            localStorage.
+            keys only expose permitted teams. Keys stay in this process only;
+            they are never written to localStorage and are not sent to
+            Linear.app. OS keyring persistence is a backend follow-up.
           </p>
           {connected && !apiKey ? null : (
             <div className="space-y-1.5">

@@ -43,8 +43,13 @@ export function CreateChannelFormFields({
 }: {
   form: CreateChannelFormState;
 }) {
-  const { channelKind, kindLabel, isCreating } = form;
+  const { channelKind, kindLabel, isCreating, allowTankKind } = form;
   const isTank = channelKind === "tank";
+  const kindOptions = [
+    { value: "stream", label: "Channel", Icon: Hash },
+    { value: "forum", label: "Forum", Icon: MessagesSquare },
+    ...(allowTankKind ? [{ value: "tank", label: "Tank", Icon: Fish }] : []),
+  ];
   const [isCreateTemplateOpen, setIsCreateTemplateOpen] = React.useState(false);
   const selectedTemplate = form.templates.find(
     (template) => template.id === form.selectedTemplateId,
@@ -73,11 +78,7 @@ export function CreateChannelFormFields({
         legend="What to create"
         onValueChange={form.setChannelKind}
         optionTestIdPrefix="create-space-kind"
-        options={[
-          { value: "stream", label: "Channel", Icon: Hash },
-          { value: "forum", label: "Forum", Icon: MessagesSquare },
-          { value: "tank", label: "Tank", Icon: Fish },
-        ]}
+        options={kindOptions}
         size="wide"
         testId="create-space-kind"
         value={channelKind}

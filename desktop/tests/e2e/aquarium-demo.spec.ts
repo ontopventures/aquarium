@@ -83,7 +83,16 @@ test("new tank shows Ocean; adding a saved profile creates a leader instance", a
   await waitForAnimations(page);
   await page.getByTestId(/aquarium-ocean-add-profile-mock-ink/).click();
   await expect(page.getByTestId("aquarium-creature-shelf")).toBeVisible();
-  await expect(page.getByTestId("aquarium-leader-crown")).toBeVisible();
+  await expect(
+    page
+      .getByTestId("aquarium-creature-shelf")
+      .getByTestId("aquarium-leader-crown"),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByTestId("aquarium-context-panel")
+      .getByTestId("aquarium-leader-crown"),
+  ).toBeVisible();
   await expect(page.getByTestId("aquarium-ocean")).toHaveCount(0);
   await expect(page.getByTestId("message-composer")).toBeVisible();
   await waitForAnimations(page);

@@ -155,6 +155,7 @@ export function ChannelBrowserDialog({
   const noopCreate = React.useCallback(async () => {}, []);
   const createForm = useCreateChannelForm({
     channelKind: createKind,
+    allowTankKind: false,
     active: open && mode === "create",
     initialName: createInitialName,
     isCreating: isCreatingChannel,

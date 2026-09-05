@@ -11,8 +11,10 @@ export type DeviceAdapter = {
   createCheckout(input: {
     tank_id: string;
     device_id: string;
+    repository_id: string;
     branch: string;
     relpath: string;
+    request_id: string;
   }): Promise<DeviceOpResult>;
   inspectRequest(request_id: string): Promise<DeviceOpResult>;
   startSession(input: {
@@ -20,10 +22,12 @@ export type DeviceAdapter = {
     device_id: string;
     checkout_path: string;
     instance_id: string;
+    request_id: string;
   }): Promise<DeviceOpResult>;
   cancelSession(input: {
     device_id: string;
     session_id: string;
+    request_id: string;
   }): Promise<DeviceOpResult>;
 };
 

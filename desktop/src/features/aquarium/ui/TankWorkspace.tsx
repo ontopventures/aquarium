@@ -66,7 +66,7 @@ export function TankWorkspace({ tankId }: { tankId: string }) {
         timelineMessages.map((message) => (
           <div data-testid={`aquarium-message-${message.id}`} key={message.id}>
             <MessageRow
-              channelId={tank.id}
+              channelId={null}
               hideAgentAccessBadge
               message={message}
               showDepthGuides={false}
@@ -133,7 +133,7 @@ export function TankWorkspace({ tankId }: { tankId: string }) {
           <div className="composer-dock composer-overlay-corner-masks relative pointer-events-auto">
             <ComposerDockBackdrop gutterClassName="inset-x-5" />
             <MessageComposer
-              channelId={tank.id}
+              channelId={null}
               channelName={tank.title}
               channelType="stream"
               containerClassName="px-5 pb-0"

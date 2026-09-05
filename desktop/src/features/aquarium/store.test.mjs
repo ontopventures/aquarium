@@ -10,10 +10,13 @@ import {
   MOCK_REPO_ID,
   MOCK_TANK_AUTH_ID,
 } from "./mock/fixtures.ts";
+import { DEVICE_REQUEST_ID_PATTERN } from "./lib/ids.ts";
 import {
   addCreatureFromProfile,
+  bindAquariumAdapters,
   createCreatureProfile,
   getAquariumSnapshot,
+  getBoundAquariumAdapters,
   provisionTank,
   resetAquariumStore,
   sendTankMessage,
@@ -147,6 +150,77 @@ test("createCreatureProfile stays a template; adding copies into a new instance"
     getAquariumSnapshot().profiles.some((item) => item.id === profile.id),
     true,
   );
+});
+
+test("provisionTank mints a caller-stable request_id and passes repository_id", async () => {
+  const seen = [];
+  const bound = getBoundAquariumAdapters();
+  bindAquariumAdapters({
+    ...bound,
+    device: {
+      ...bound.device,
+      async createCheckout(input) {
+        seen.push({ ...input });
+        return bound.device.createCheckout(input);
+      },
+    },
+  });
+  const created = await provisionTank({
+    title: "Idempotent checkout",
+    issue_id: MOCK_ISSUE_DASHBOARD_ID,
+    repository_id: MOCK_REPO_ID,
+    device_id: MOCK_DEVICE_READY_ID,
+  });
+  assert.equal(created.ok, true);
+  if (!created.ok) return;
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].repository_id, MOCK_REPO_ID);
+  assert.match(seen[0].request_id, DEVICE_REQUEST_ID_PATTERN);
+  assert.equal(created.tank.request_id, seen[0].request_id);
+});
+
+test("error-tank retry inspects then reuses the same request_id", async () => {
+  const seen = [];
+  let failOnce = true;
+  const bound = getBoundAquariumAdapters();
+  bindAquariumAdapters({
+    ...bound,
+    device: {
+      ...bound.device,
+      async createCheckout(input) {
+        seen.push(input.request_id);
+        if (failOnce) {
+          failOnce = false;
+          return {
+            source: "mock",
+            status: "failed",
+            request_id: input.request_id,
+            message: "Mock checkout conflict",
+          };
+        }
+        return bound.device.createCheckout(input);
+      },
+    },
+  });
+  const first = await provisionTank({
+    title: "Retry me",
+    issue_id: MOCK_ISSUE_DASHBOARD_ID,
+    repository_id: MOCK_REPO_ID,
+    device_id: MOCK_DEVICE_READY_ID,
+  });
+  assert.equal(first.ok, false);
+  const second = await provisionTank({
+    title: "Retry me",
+    issue_id: MOCK_ISSUE_DASHBOARD_ID,
+    repository_id: MOCK_REPO_ID,
+    device_id: MOCK_DEVICE_READY_ID,
+  });
+  assert.equal(second.ok, true);
+  if (!second.ok) return;
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0], seen[1]);
+  assert.equal(second.tank.request_id, seen[0]);
+  assert.equal(second.existing, true);
 });
 
 test("first message collapses ocean without requiring a creature", async () => {

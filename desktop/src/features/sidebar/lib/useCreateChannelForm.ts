@@ -22,6 +22,12 @@ export type CreateChannelInput = {
 type UseCreateChannelFormOptions = {
   channelKind: CreateChannelKind;
   /**
+   * Tank is a third kind on the shared create dialog. Channel/forum browse
+   * must not expose it — that path has no tank navigation and would provision
+   * a fixture tank into a live channel browser.
+   */
+  allowTankKind?: boolean;
+  /**
    * When this flips to `true` the form resets its fields (and applies
    * `initialName`). Pass the dialog/mode's open state.
    */
@@ -37,6 +43,7 @@ type UseCreateChannelFormOptions = {
 export type CreateChannelFormState = {
   channelKind: CreateChannelKind;
   setChannelKind: (kind: CreateChannelKind) => void;
+  allowTankKind: boolean;
   kindLabel: string;
   tankFields: TankCreateFieldState;
   name: string;
@@ -67,6 +74,7 @@ export type CreateChannelFormState = {
  */
 export function useCreateChannelForm({
   channelKind,
+  allowTankKind = false,
   active,
   initialName,
   isCreating,
@@ -180,6 +188,10 @@ export function useCreateChannelForm({
       void (async () => {
         try {
           if (spaceKind === "tank") {
+            if (!allowTankKind) {
+              setErrorMessage("Tanks are created from the Tanks section.");
+              return;
+            }
             const result = await provisionTank({
               title: trimmedName,
               description: description.trim() || undefined,
@@ -213,6 +225,7 @@ export function useCreateChannelForm({
       })();
     },
     [
+      allowTankKind,
       description,
       ephemeral,
       kindLabel,
@@ -237,7 +250,11 @@ export function useCreateChannelForm({
 
   return {
     channelKind: spaceKind,
-    setChannelKind: setSpaceKind,
+    setChannelKind: (kind: CreateChannelKind) => {
+      if (kind === "tank" && !allowTankKind) return;
+      setSpaceKind(kind);
+    },
+    allowTankKind,
     kindLabel,
     tankFields,
     name,

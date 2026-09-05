@@ -14,6 +14,7 @@ function mockFailure(message: string): DeviceOpResult {
 export function createMockDeviceAdapter(
   getDevices: () => DeviceCapabilities[],
 ): DeviceAdapter {
+  const journal = new Map<string, DeviceOpResult>();
   return {
     async inspectCapabilities(deviceId) {
       const device = getDevices().find((item) => item.device_id === deviceId);
@@ -41,37 +42,49 @@ export function createMockDeviceAdapter(
           "Execution device is offline or not ready. Create does not fall back to this machine. (mock)",
         );
       }
-      return {
+      const result: DeviceOpResult = {
         source: "mock",
         status: "succeeded",
-        request_id: `0000000000000-${"0".repeat(32)}`,
+        request_id: input.request_id,
         worktree_path: `/mock/tanks/${input.tank_id}`,
         branch: input.branch,
         head: "mock-head",
         message: "Mock checkout recorded. Not a live git worktree.",
       };
+      journal.set(input.request_id, result);
+      return result;
     },
-    async inspectRequest() {
-      return {
+    async inspectRequest(request_id) {
+      return (
+        journal.get(request_id) ?? {
+          source: "mock",
+          status: "uncertain",
+          request_id,
+          message: "Mock request inspect. Not a live journal row.",
+        }
+      );
+    },
+    async startSession(input) {
+      const result: DeviceOpResult = {
         source: "mock",
         status: "succeeded",
-        message: "Mock request inspect. Not a live journal row.",
-      };
-    },
-    async startSession() {
-      return {
-        source: "mock",
-        status: "succeeded",
-        session_id: `session-mock-${Date.now().toString(16)}`,
+        request_id: input.request_id,
+        session_id: `session-mock-${input.instance_id}`,
         message: "Mock session id. Not a live harness process.",
       };
+      journal.set(input.request_id, result);
+      return result;
     },
-    async cancelSession() {
-      return {
+    async cancelSession(input) {
+      const result: DeviceOpResult = {
         source: "mock",
         status: "succeeded",
+        request_id: input.request_id,
+        session_id: input.session_id,
         message: "Mock cancel. No process was signalled.",
       };
+      journal.set(input.request_id, result);
+      return result;
     },
   };
 }

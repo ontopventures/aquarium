@@ -49,6 +49,7 @@ export function CreateChannelDialog({
 
   const form = useCreateChannelForm({
     channelKind: channelKind ?? "stream",
+    allowTankKind: true,
     active: open,
     isCreating,
     onCreate: onCreate as (input: CreateChannelInput) => Promise<void>,

@@ -122,6 +122,7 @@ export type Tank = {
   conversation_id?: string | null;
   branch?: string;
   worktree_path?: string;
+  request_id?: string;
   errorMessage?: string;
   oceanCollapsed: boolean;
   createdAt: number;
