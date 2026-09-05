@@ -72,11 +72,8 @@ async fn handle_conn(
                         let id = event.get("id").and_then(|v| v.as_str()).unwrap_or("");
                         let encoded = json!(event).to_string();
                         let _ = tx.send(encoded);
-                        {
-                            let mut filters = pending.lock().await;
-                            // Retain events so late subscribers still see them via REQ.
-                            filters.retain(|_| true);
-                        }
+                        // Fixture only: live fan-out. No stored history; subscribers
+                        // must REQ before the publisher sends EVENT.
                         ws.send(Message::Text(json!(["OK", id, true, ""]).to_string().into()))
                             .await
                             .map_err(|e| DeviceError::Transport(e.to_string()))?;

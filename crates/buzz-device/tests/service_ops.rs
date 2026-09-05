@@ -384,6 +384,24 @@ fn start_session_cwd_is_checkout() {
         .status();
 }
 
+#[test]
+fn unknown_op_is_rejected_without_mutation() {
+    let (tmp, service, host, owner) = setup();
+    let mut req = checkout_req("dev-1", "tanks/badop", "aquarium/badop");
+    req.op = "create_chekout".into();
+    let outcome = handle_request(
+        &service,
+        &owner.public_key().to_hex(),
+        &host.public_key().to_hex(),
+        &req,
+        now_ms(),
+    )
+    .unwrap();
+    assert_eq!(outcome.receipt.status, ReceiptStatus::Rejected);
+    assert!(!outcome.mutated);
+    assert!(!tmp.path().join("tanks/badop").exists());
+}
+
 fn plant_executing(state_dir: &Path, req: &DeviceRequest, actor: &str) {
     let journal = Journal::open(state_dir).unwrap();
     journal

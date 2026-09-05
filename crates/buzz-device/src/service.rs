@@ -136,6 +136,15 @@ pub fn handle_request(
             ReceiptStatus::Rejected,
         );
     }
+    let Some(op) = DeviceOp::parse(&request.op) else {
+        return reject(
+            service,
+            request,
+            actor_pubkey_hex,
+            &format!("unknown op {}", request.op),
+            ReceiptStatus::Rejected,
+        );
+    };
     let fingerprint = fingerprint_request(request)?;
     if let Some(existing) = service.journal.get(&request.request_id)? {
         if existing.fingerprint != fingerprint {
@@ -160,8 +169,6 @@ pub fn handle_request(
         }
     }
 
-    let op = DeviceOp::parse(&request.op)
-        .ok_or_else(|| DeviceError::Transport(format!("unknown op {}", request.op)))?;
     let mut entry = JournalEntry {
         request_id: request.request_id.clone(),
         fingerprint: fingerprint.clone(),

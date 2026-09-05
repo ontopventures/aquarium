@@ -7,8 +7,9 @@ use buzz_core::device::DEVICE_PROTOCOL_VERSION;
 use buzz_core::kind::{KIND_DEVICE_RECEIPT, KIND_DEVICE_REQUEST};
 use buzz_device::{
     decrypt_receipt, decrypt_request, fingerprint_request, generate_request_id, handle_request,
-    publish_receipt, publish_request, run_agent_fixture, run_mux, run_mux_listener, DeviceReceipt,
-    DeviceRequest, DeviceService, GrantFile, HandleOutcome, ReceiptStatus,
+    publish_advertisement, publish_receipt, publish_request, run_agent_fixture, run_mux,
+    run_mux_listener, DeviceReceipt, DeviceRequest, DeviceService, GrantFile, HandleOutcome,
+    ReceiptStatus,
 };
 use buzz_ws_client::{NostrWsConnection, RelayMessage};
 use clap::{Parser, Subcommand};
@@ -191,6 +192,9 @@ async fn serve(
         .kind(nostr::Kind::Custom(KIND_DEVICE_REQUEST as u16))
         .pubkey(keys.public_key());
     conn.send_raw(&json!(["REQ", "device-in", filter])).await?;
+    let advertisement =
+        publish_advertisement(&keys, &service.grant.device_id, service.grant.generation)?;
+    conn.send_event(advertisement).await?;
     tracing::info!("device host online as {host_hex}");
     loop {
         match timeout(

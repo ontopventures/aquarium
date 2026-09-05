@@ -22,8 +22,9 @@ pub use path_guard::resolve_under_root;
 pub use service::{handle_request, DeviceService, HandleOutcome};
 pub use session::{cancel_session, run_agent_fixture, spawn_fixture_agent, SessionEvidence};
 pub use wire::{
-    decrypt_receipt, decrypt_request, fingerprint_request, generate_request_id, publish_receipt,
-    publish_request, DeviceReceipt, DeviceRequest, ReceiptStatus,
+    decrypt_receipt, decrypt_request, fingerprint_request, generate_request_id,
+    publish_advertisement, publish_receipt, publish_request, DeviceReceipt, DeviceRequest,
+    ReceiptStatus,
 };
 
 use buzz_core::device::DeviceGrant;

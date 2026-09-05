@@ -2,7 +2,7 @@
 
 use crate::DeviceError;
 use buzz_core::device::{parameter_fingerprint, DeviceOp};
-use buzz_core::kind::{KIND_DEVICE_RECEIPT, KIND_DEVICE_REQUEST};
+use buzz_core::kind::{KIND_DEVICE_ADVERTISEMENT, KIND_DEVICE_RECEIPT, KIND_DEVICE_REQUEST};
 use buzz_core::observer::{decrypt_observer_payload, encrypt_observer_payload};
 use nostr::{Event, EventBuilder, Keys, PublicKey, Tag};
 use rand::RngExt;
@@ -80,6 +80,29 @@ pub fn generate_request_id() -> String {
     let mut bytes = [0u8; 16];
     rand::rng().fill(&mut bytes);
     format!("{now:013}-{hex}", hex = hex::encode(bytes))
+}
+
+/// Publish kind 30180 readiness (plaintext JSON; not a job queue).
+pub fn publish_advertisement(
+    keys: &Keys,
+    device_id: &str,
+    grant_generation: u64,
+) -> Result<Event, DeviceError> {
+    let body = serde_json::json!({
+        "device_id": device_id,
+        "online": true,
+        "protocol_version": buzz_core::device::DEVICE_PROTOCOL_VERSION,
+        "harnesses": ["fixture-agent"],
+        "setup_readiness": "ready",
+        "grant_generation": grant_generation,
+    });
+    EventBuilder::new(
+        nostr::Kind::Custom(KIND_DEVICE_ADVERTISEMENT as u16),
+        serde_json::to_string(&body).map_err(|e| DeviceError::Transport(e.to_string()))?,
+    )
+    .tags([Tag::parse(["d", device_id]).map_err(|e| DeviceError::Transport(e.to_string()))?])
+    .sign_with_keys(keys)
+    .map_err(|e| DeviceError::Transport(e.to_string()))
 }
 
 /// Encrypt and sign a kind 43200 request addressed to the device.

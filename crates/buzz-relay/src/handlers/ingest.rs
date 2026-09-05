@@ -702,6 +702,11 @@ pub(crate) fn is_global_only_kind(kind: u32) -> bool {
             // NIP-AM: agent turn metrics are owner-scoped global events.
             // Channel identity is encrypted inside the payload — no `h` tag.
             | KIND_AGENT_TURN_METRIC
+            // Aquarium device command plane: host-targeted, never channel-scoped.
+            | KIND_DEVICE_ADVERTISEMENT
+            | KIND_DEVICE_GRANT
+            | KIND_DEVICE_REQUEST
+            | KIND_DEVICE_RECEIPT
             // NIP-PL leases are author-owned, addressable global state.
             | super::push_lease::KIND_PUSH_LEASE
     )
@@ -3943,6 +3948,30 @@ mod postgres_tests {
                 required_scope_for_kind(kind, &dummy).ok(),
                 Some(Scope::UsersWrite),
                 "kind {kind} should require UsersWrite scope"
+            );
+        }
+    }
+
+    #[test]
+    fn device_kinds_are_global_only_and_in_scope_allowlist() {
+        let dummy = make_dummy_event();
+        for kind in [
+            KIND_DEVICE_ADVERTISEMENT,
+            KIND_DEVICE_GRANT,
+            KIND_DEVICE_REQUEST,
+            KIND_DEVICE_RECEIPT,
+        ] {
+            assert!(
+                is_global_only_kind(kind),
+                "device kind {kind} must be global-only"
+            );
+            assert!(
+                !requires_h_channel_scope(kind),
+                "device kind {kind} must not require an h-tag"
+            );
+            assert!(
+                required_scope_for_kind(kind, &dummy).is_ok(),
+                "device kind {kind} must be in the scope allowlist"
             );
         }
     }
