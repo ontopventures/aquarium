@@ -13,7 +13,7 @@ use buzz_device::{
 };
 use buzz_ws_client::{NostrWsConnection, RelayMessage};
 use clap::{Parser, Subcommand};
-use nostr::{Filter, Keys, PublicKey};
+use nostr::{Filter, Keys, PublicKey, ToBech32};
 use serde_json::json;
 use tokio::time::timeout;
 
@@ -77,6 +77,12 @@ enum Commands {
         #[arg(long)]
         session_id: String,
     },
+    /// Write a new fixture nsec and print its pubkey. Not for existing user keys.
+    Keygen {
+        /// Destination nsec file.
+        #[arg(long)]
+        nsec_file: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -126,6 +132,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
         Commands::AgentFixture { session_id } => {
             run_agent_fixture(&session_id)?;
+            Ok(())
+        }
+        Commands::Keygen { nsec_file } => {
+            let keys = Keys::generate();
+            if let Some(parent) = nsec_file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&nsec_file, format!("{}\n", keys.secret_key().to_bech32()?))?;
+            println!("{}", keys.public_key().to_hex());
             Ok(())
         }
         Commands::Mux { bind } => {
