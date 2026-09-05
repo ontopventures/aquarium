@@ -192,14 +192,10 @@ fn mock_issues() -> Vec<LinearIssue> {
 fn linear_mode_from_env() -> LinearTransport {
     #[cfg(debug_assertions)]
     {
+        // Explicit mock only. A custom endpoint must not mint source:linear
+        // against a stand-in server in a debug desktop.
         if std::env::var("AQUARIUM_LINEAR_MOCK").ok().as_deref() == Some("1") {
             return LinearTransport::Mock;
-        }
-        if let Ok(endpoint) = std::env::var("AQUARIUM_LINEAR_ENDPOINT") {
-            let endpoint = endpoint.trim().to_string();
-            if !endpoint.is_empty() {
-                return LinearTransport::Live { endpoint };
-            }
         }
     }
     LinearTransport::Live {
@@ -730,7 +726,22 @@ mod tests {
             "production must not special-case a fixture key prefix"
         );
         assert!(!production.contains("fn aquarium_linear_secret_get"));
+        assert!(
+            !production.contains("AQUARIUM_LINEAR_ENDPOINT"),
+            "debug/production must not treat a custom endpoint as live Linear"
+        );
         assert_eq!(LINEAR_GRAPHQL_URL, "https://api.linear.app/graphql");
+    }
+
+    #[test]
+    fn env_endpoint_does_not_override_official_url() {
+        let mode = linear_mode_from_env();
+        match mode {
+            LinearTransport::Mock => {}
+            LinearTransport::Live { endpoint } => {
+                assert_eq!(endpoint, LINEAR_GRAPHQL_URL);
+            }
+        }
     }
 
     #[test]

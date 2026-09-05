@@ -73,6 +73,19 @@ fn relay_url() -> String {
     crate::relay::relay_ws_url()
 }
 
+/// Fail closed before minting a signed request. Empty host identity must
+/// not fall back to local git/spawn.
+fn require_device_host(device_id: &str, device_pubkey: &str) -> Result<(), String> {
+    if device_id.trim().is_empty() || device_pubkey.trim().is_empty() {
+        return Err("device_id and device_pubkey are required; refusing local fallback".into());
+    }
+    let pubkey = device_pubkey.trim();
+    if pubkey.len() != 64 || !pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("device_pubkey must be 64 hex characters".into());
+    }
+    Ok(())
+}
+
 fn checkout_device_request(
     input: &DeviceCheckoutArgs,
 ) -> Result<buzz_device_pkg::DeviceRequest, String> {
@@ -127,6 +140,7 @@ pub async fn aquarium_device_inspect_capabilities(
     grant_generation: u64,
 ) -> Result<Value, String> {
     let keys = device_keys(&state)?;
+    require_device_host(&device_id, &device_pubkey)?;
     let request = buzz_device_pkg::DeviceRequest {
         v: buzz_core_pkg::device::DEVICE_PROTOCOL_VERSION,
         request_id: buzz_device_pkg::generate_request_id(),
@@ -151,6 +165,7 @@ pub async fn aquarium_device_create_checkout(
     input: DeviceCheckoutArgs,
 ) -> Result<Value, String> {
     let keys = device_keys(&state)?;
+    require_device_host(&input.device_id, &input.device_pubkey)?;
     let request = checkout_device_request(&input)?;
     let receipt =
         buzz_device_pkg::submit_device_request(&keys, &input.device_pubkey, &relay_url(), request)
@@ -170,6 +185,7 @@ pub async fn aquarium_device_inspect_request(
     grant_generation: u64,
 ) -> Result<Value, String> {
     let keys = device_keys(&state)?;
+    require_device_host(&device_id, &device_pubkey)?;
     let id = buzz_device_pkg::require_caller_request_id(&request_id).map_err(|e| e.to_string())?;
     let request = buzz_device_pkg::DeviceRequest {
         v: buzz_core_pkg::device::DEVICE_PROTOCOL_VERSION,
@@ -194,6 +210,7 @@ pub async fn aquarium_device_start_session(
     input: DeviceStartArgs,
 ) -> Result<Value, String> {
     let keys = device_keys(&state)?;
+    require_device_host(&input.device_id, &input.device_pubkey)?;
     let request = start_device_request(&input)?;
     let receipt =
         buzz_device_pkg::submit_device_request(&keys, &input.device_pubkey, &relay_url(), request)
@@ -210,6 +227,7 @@ pub async fn aquarium_device_cancel_session(
     input: DeviceCancelArgs,
 ) -> Result<Value, String> {
     let keys = device_keys(&state)?;
+    require_device_host(&input.device_id, &input.device_pubkey)?;
     let request = cancel_device_request(&input)?;
     let receipt =
         buzz_device_pkg::submit_device_request(&keys, &input.device_pubkey, &relay_url(), request)
@@ -312,6 +330,15 @@ mod tests {
         assert_eq!(ok.request_id, CALLER_REQUEST_ID);
         let retry = checkout_device_request(&checkout_args(CALLER_REQUEST_ID, "repo-1")).unwrap();
         assert_eq!(retry.request_id, ok.request_id);
+    }
+
+    #[test]
+    fn empty_device_host_fails_closed() {
+        let pubkey = "ab".repeat(32);
+        assert!(require_device_host("", &pubkey).is_err());
+        assert!(require_device_host("dev-1", "").is_err());
+        assert!(require_device_host("dev-1", "deadbeef").is_err());
+        assert!(require_device_host("dev-1", &pubkey).is_ok());
     }
 
     #[test]
