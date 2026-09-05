@@ -1,223 +1,13 @@
-//! Aquarium desktop adapter: device request path + Linear OS secret slot.
+//! Aquarium desktop adapter: device request path.
 //!
-//! No API keys in logs. No general secret getter for the renderer.
-//! Linear HTTP to Linear.app waits for authorized credentials; isolated
-//! `lin_fixture_` keys exercise connect/search without a live workspace.
+//! Linear commands live in [`super::aquarium_linear`]. No API keys in logs.
+//! No general secret getter for the renderer.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::State;
 
 use crate::app_state::AppState;
-use crate::secret_store::SecretStore;
-
-/// Keychain blob slot. Never the identity nsec key.
-pub const LINEAR_SECRET_SLOT: &str = "aquarium-linear-api-key";
-const FIXTURE_PREFIX: &str = "lin_fixture_";
-const IDENTITY_SLOT: &str = "identity";
-
-/// Linear connection DTO. Never includes the API key.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LinearConnection {
-    /// Provenance.
-    pub source: String,
-    /// Whether a usable Linear client is connected.
-    pub connected: bool,
-    /// Workspace label when connected.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_name: Option<String>,
-    /// Human-readable status. Must not contain the key.
-    pub message: String,
-}
-
-/// Linear issue DTO.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LinearIssue {
-    /// Provenance.
-    pub source: String,
-    /// Linear issue id.
-    pub id: String,
-    /// Display identifier (e.g. AQU-1).
-    pub identifier: String,
-    /// Title.
-    pub title: String,
-    /// Workflow state.
-    pub status: String,
-    /// Optional project.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_name: Option<String>,
-    /// Optional URL.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    /// Optional bound tank.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tank_id: Option<String>,
-}
-
-/// In-memory or OS-backed secret slot. Tests use a map; production uses keyring.
-pub trait LinearSecretSlot {
-    /// Persist the key. Errors must not echo the value.
-    fn store(&self, value: &str) -> Result<(), String>;
-    /// Load the key for native Linear operations only. Never returned to JS.
-    fn load(&self) -> Result<Option<String>, String>;
-    /// Forget the key.
-    fn delete(&self) -> Result<(), String>;
-}
-
-struct KeyringLinearSlot;
-
-impl LinearSecretSlot for KeyringLinearSlot {
-    fn store(&self, value: &str) -> Result<(), String> {
-        if LINEAR_SECRET_SLOT == IDENTITY_SLOT {
-            return Err("refusing to store Linear key in the identity nsec slot".into());
-        }
-        SecretStore::shared(crate::app_state::keyring_service())
-            .store(LINEAR_SECRET_SLOT, value)
-            .map_err(|_| "linear secret store unavailable".to_string())
-    }
-
-    fn load(&self) -> Result<Option<String>, String> {
-        SecretStore::shared(crate::app_state::keyring_service())
-            .load(LINEAR_SECRET_SLOT)
-            .map_err(|_| "linear secret store unavailable".to_string())
-    }
-
-    fn delete(&self) -> Result<(), String> {
-        SecretStore::shared(crate::app_state::keyring_service())
-            .delete(LINEAR_SECRET_SLOT)
-            .map_err(|_| "linear secret store unavailable".to_string())
-    }
-}
-
-fn is_fixture_key(key: &str) -> bool {
-    key.starts_with(FIXTURE_PREFIX)
-}
-
-fn connection_from_key(key: Option<&str>) -> LinearConnection {
-    match key {
-        None => LinearConnection {
-            source: "linear".into(),
-            connected: false,
-            workspace_name: None,
-            message: "not connected".into(),
-        },
-        Some(key) if is_fixture_key(key) => LinearConnection {
-            source: "linear".into(),
-            connected: true,
-            workspace_name: Some("Aquarium fixture".into()),
-            message: "fixture workspace".into(),
-        },
-        Some(_) => LinearConnection {
-            source: "linear".into(),
-            connected: false,
-            workspace_name: None,
-            message: "waiting for authorized Linear credentials".into(),
-        },
-    }
-}
-
-fn fixture_issues() -> Vec<LinearIssue> {
-    vec![LinearIssue {
-        source: "linear".into(),
-        id: "fixture-issue-1".into(),
-        identifier: "AQU-1".into(),
-        title: "Fixture tank".into(),
-        status: "Todo".into(),
-        project_name: Some("Aquarium".into()),
-        url: None,
-        tank_id: None,
-    }]
-}
-
-fn json_has_secret(value: &Value, secret: &str) -> bool {
-    let encoded = value.to_string();
-    !secret.is_empty() && encoded.contains(secret)
-}
-
-fn search_issues_native(key: &str, query: &str) -> Result<Vec<LinearIssue>, String> {
-    if is_fixture_key(key) {
-        let q = query.to_ascii_lowercase();
-        return Ok(fixture_issues()
-            .into_iter()
-            .filter(|issue| {
-                q.is_empty()
-                    || issue.title.to_ascii_lowercase().contains(&q)
-                    || issue.identifier.to_ascii_lowercase().contains(&q)
-            })
-            .collect());
-    }
-    Err("waiting for authorized Linear credentials".into())
-}
-
-fn get_issue_native(key: &str, id: &str) -> Result<Option<LinearIssue>, String> {
-    if is_fixture_key(key) {
-        return Ok(fixture_issues()
-            .into_iter()
-            .find(|issue| issue.id == id || issue.identifier == id));
-    }
-    Err("waiting for authorized Linear credentials".into())
-}
-
-/// Store a Linear personal key in the OS keyring. The key is never returned.
-#[tauri::command]
-pub fn aquarium_linear_connect(api_key: String) -> Result<LinearConnection, String> {
-    let key = api_key.trim().to_string();
-    if key.is_empty() {
-        return Err("linear api key is required".into());
-    }
-    KeyringLinearSlot.store(&key)?;
-    let conn = connection_from_key(Some(&key));
-    if json_has_secret(&serde_json::to_value(&conn).unwrap_or(Value::Null), &key) {
-        return Err("linear connect refused to emit a credential".into());
-    }
-    Ok(conn)
-}
-
-/// Remove the Linear key from the OS keyring.
-#[tauri::command]
-pub fn aquarium_linear_disconnect() -> Result<LinearConnection, String> {
-    KeyringLinearSlot.delete()?;
-    Ok(connection_from_key(None))
-}
-
-/// Connection status without reading the key into the renderer.
-#[tauri::command]
-pub fn aquarium_linear_connection() -> Result<LinearConnection, String> {
-    let key = KeyringLinearSlot.load()?;
-    let conn = connection_from_key(key.as_deref());
-    if let Some(secret) = key.as_deref() {
-        if json_has_secret(&serde_json::to_value(&conn).unwrap_or(Value::Null), secret) {
-            return Err("linear connection refused to emit a credential".into());
-        }
-    }
-    Ok(conn)
-}
-
-/// Search issues using the stored key natively. Fixture keys return isolated data.
-#[tauri::command]
-pub fn aquarium_linear_search_issues(query: String) -> Result<Vec<LinearIssue>, String> {
-    let key = KeyringLinearSlot
-        .load()?
-        .ok_or_else(|| "linear is not connected".to_string())?;
-    let issues = search_issues_native(&key, &query)?;
-    if json_has_secret(&serde_json::to_value(&issues).unwrap_or(Value::Null), &key) {
-        return Err("linear search refused to emit a credential".into());
-    }
-    Ok(issues)
-}
-
-/// Fetch one issue using the stored key natively.
-#[tauri::command]
-pub fn aquarium_linear_get_issue(id: String) -> Result<Option<LinearIssue>, String> {
-    let key = KeyringLinearSlot
-        .load()?
-        .ok_or_else(|| "linear is not connected".to_string())?;
-    let issue = get_issue_native(&key, &id)?;
-    if json_has_secret(&serde_json::to_value(&issue).unwrap_or(Value::Null), &key) {
-        return Err("linear get issue refused to emit a credential".into());
-    }
-    Ok(issue)
-}
 
 #[derive(Debug, Deserialize)]
 pub struct DeviceCheckoutArgs {
@@ -432,23 +222,6 @@ pub async fn aquarium_device_cancel_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    struct MapSlot(Mutex<Option<String>>);
-
-    impl LinearSecretSlot for MapSlot {
-        fn store(&self, value: &str) -> Result<(), String> {
-            *self.0.lock().unwrap() = Some(value.to_string());
-            Ok(())
-        }
-        fn load(&self) -> Result<Option<String>, String> {
-            Ok(self.0.lock().unwrap().clone())
-        }
-        fn delete(&self) -> Result<(), String> {
-            *self.0.lock().unwrap() = None;
-            Ok(())
-        }
-    }
 
     const CALLER_REQUEST_ID: &str = "1788581600001-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -467,8 +240,8 @@ mod tests {
 
     #[test]
     fn no_aquarium_linear_secret_get() {
-        let commands = include_str!("aquarium.rs");
-        let production = commands
+        let linear = include_str!("aquarium_linear.rs");
+        let production = linear
             .split("#[cfg(test)]")
             .next()
             .expect("production source before tests");
@@ -476,10 +249,8 @@ mod tests {
             !production.contains("fn aquarium_linear_secret_get"),
             "renderer must not have a Linear secret getter"
         );
-        assert!(
-            !production.contains("pub fn aquarium_linear_secret_get"),
-            "renderer must not have a Linear secret getter"
-        );
+        let commands = include_str!("aquarium.rs");
+        assert!(!commands.contains("fn aquarium_linear_secret_get"));
         let handler = include_str!("../lib.rs");
         assert!(
             !handler.contains("aquarium_linear_secret_get"),
@@ -487,70 +258,6 @@ mod tests {
         );
         assert!(handler.contains("aquarium_linear_connect"));
         assert!(handler.contains("aquarium_linear_connection"));
-    }
-
-    #[test]
-    fn linear_slot_is_not_identity_nsec() {
-        assert_eq!(LINEAR_SECRET_SLOT, "aquarium-linear-api-key");
-        assert_ne!(LINEAR_SECRET_SLOT, IDENTITY_SLOT);
-        assert_eq!(IDENTITY_SLOT, "identity");
-        assert!(!LINEAR_SECRET_SLOT.contains("nsec"));
-        assert!(!LINEAR_SECRET_SLOT.contains("identity"));
-    }
-
-    #[test]
-    fn fixture_connect_does_not_echo_key() {
-        let key = "lin_fixture_demo_secret";
-        let conn = connection_from_key(Some(key));
-        let json = serde_json::to_value(&conn).unwrap();
-        assert!(!json_has_secret(&json, key));
-        assert!(conn.connected);
-        assert_eq!(conn.source, "linear");
-        assert_eq!(conn.workspace_name.as_deref(), Some("Aquarium fixture"));
-    }
-
-    #[test]
-    fn unauthorized_real_key_does_not_connect_or_echo() {
-        let key = "lin_api_not_authorized_yet";
-        let conn = connection_from_key(Some(key));
-        let json = serde_json::to_value(&conn).unwrap();
-        assert!(!json_has_secret(&json, key));
-        assert!(!conn.connected);
-        assert!(conn.message.contains("authorized"));
-        assert!(search_issues_native(key, "AQU")
-            .unwrap_err()
-            .contains("authorized"));
-        assert!(get_issue_native(key, "AQU-1")
-            .unwrap_err()
-            .contains("authorized"));
-    }
-
-    #[test]
-    fn fixture_search_is_isolated() {
-        let key = "lin_fixture_isolated";
-        let issues = search_issues_native(key, "tank").unwrap();
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].source, "linear");
-        assert!(issues[0].identifier.starts_with("AQU-"));
-        let json = serde_json::to_value(&issues).unwrap();
-        assert!(!json_has_secret(&json, key));
-        assert!(search_issues_native(key, "unrelated-query")
-            .unwrap()
-            .is_empty());
-        let issue = get_issue_native(key, "AQU-1")
-            .unwrap()
-            .expect("fixture issue");
-        assert_eq!(issue.id, "fixture-issue-1");
-        assert!(get_issue_native(key, "missing").unwrap().is_none());
-    }
-
-    #[test]
-    fn map_slot_round_trip_delete() {
-        let slot = MapSlot(Mutex::new(None));
-        slot.store("lin_fixture_x").unwrap();
-        assert_eq!(slot.load().unwrap().as_deref(), Some("lin_fixture_x"));
-        slot.delete().unwrap();
-        assert!(slot.load().unwrap().is_none());
     }
 
     #[test]
