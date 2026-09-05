@@ -7,11 +7,13 @@ use buzz_core::coord::{CoordPeers, CoordPhase, CoordStatus, COORD_PROTOCOL_VERSI
 use buzz_core::device::DEVICE_PROTOCOL_VERSION;
 use buzz_core::kind::{KIND_DEVICE_RECEIPT, KIND_DEVICE_REQUEST};
 use buzz_device::{
-    coord_filter, decrypt_receipt, decrypt_request, fingerprint_request, generate_request_id,
-    handle_coord, handle_request, parse_coord_event, publish_advertisement, publish_coord,
-    publish_receipt, publish_request, run_agent_fixture, run_mux, run_mux_listener, CoordBind,
-    CoordJournal, DeviceReceipt, DeviceRequest, DeviceService, GrantFile, HandleOutcome,
-    ReceiptStatus,
+    coord_filter, decrypt_receipt, decrypt_request, device_request_from_cancel,
+    device_request_from_checkout, device_request_from_start, fingerprint_request,
+    generate_request_id, handle_coord, handle_request, parse_coord_event, publish_advertisement,
+    publish_coord, publish_receipt, publish_request, require_caller_request_id, run_agent_fixture,
+    run_mux, run_mux_listener, submit_device_request, CancelSessionInput, CoordBind, CoordJournal,
+    CreateCheckoutInput, DeviceReceipt, DeviceRequest, DeviceService, GrantFile, HandleOutcome,
+    ReceiptStatus, StartSessionInput,
 };
 use buzz_ws_client::{NostrWsConnection, RelayMessage};
 use clap::{Parser, Subcommand};
@@ -132,11 +134,11 @@ enum CtlOp {
         #[arg(long)]
         tank_id: String,
         #[arg(long)]
+        repository_id: String,
+        #[arg(long)]
         branch: String,
         #[arg(long)]
         relpath: String,
-        #[arg(long, default_value = "repo")]
-        repo_relpath: String,
         #[arg(long, default_value = "HEAD")]
         start_rev: String,
     },
@@ -152,7 +154,9 @@ enum CtlOp {
     },
     CancelSession {
         #[arg(long)]
-        pid: u32,
+        session_id: String,
+        #[arg(long)]
+        pid: Option<u32>,
     },
 }
 
@@ -371,87 +375,82 @@ async fn ctl(
         return Err("device_pubkey is required; refusing to run locally".into());
     }
     let keys = load_keys(&nsec_file)?;
-    let device_pk = PublicKey::from_hex(device_pubkey.trim())?;
-    let (op_name, params) = match op {
-        CtlOp::InspectCapabilities => ("inspect_capabilities", json!({})),
+    let request = match op {
+        CtlOp::InspectCapabilities => DeviceRequest {
+            v: DEVICE_PROTOCOL_VERSION,
+            request_id: request_id.unwrap_or_else(generate_request_id),
+            op: "inspect_capabilities".into(),
+            grant_generation,
+            device_id: device_id.clone(),
+            params: json!({}),
+        },
         CtlOp::CreateCheckout {
             tank_id,
+            repository_id,
             branch,
             relpath,
-            repo_relpath,
             start_rev,
-        } => (
-            "create_checkout",
-            json!({
-                "tank_id": tank_id,
-                "branch": branch,
-                "relpath": relpath,
-                "repo_relpath": repo_relpath,
-                "start_rev": start_rev,
-            }),
-        ),
-        CtlOp::InspectRequest { target_request_id } => (
-            "inspect_request",
-            json!({ "request_id": target_request_id }),
-        ),
+        } => {
+            let caller_id = require_caller_request_id(&request_id.unwrap_or_default())?;
+            let mut request = device_request_from_checkout(
+                &CreateCheckoutInput {
+                    tank_id,
+                    device_id: device_id.clone(),
+                    repository_id,
+                    branch,
+                    relpath,
+                    request_id: caller_id,
+                },
+                grant_generation,
+            )?;
+            request.params["start_rev"] = json!(start_rev);
+            request
+        }
+        CtlOp::InspectRequest { target_request_id } => DeviceRequest {
+            v: DEVICE_PROTOCOL_VERSION,
+            request_id: require_caller_request_id(&target_request_id)?,
+            op: "inspect_request".into(),
+            grant_generation,
+            device_id: device_id.clone(),
+            params: json!({ "request_id": target_request_id }),
+        },
         CtlOp::StartSession {
             checkout_path,
             session_id,
-        } => (
-            "start_session",
-            json!({
-                "checkout_path": checkout_path,
-                "session_id": session_id,
-            }),
-        ),
-        CtlOp::CancelSession { pid } => ("cancel_session", json!({ "pid": pid })),
-    };
-    let request = DeviceRequest {
-        v: DEVICE_PROTOCOL_VERSION,
-        request_id: request_id.unwrap_or_else(generate_request_id),
-        op: op_name.to_string(),
-        grant_generation,
-        device_id: device_id.clone(),
-        params,
-    };
-    let mut conn = NostrWsConnection::connect_authenticated(&relay, &keys, None).await?;
-    let filter = Filter::new()
-        .kind(nostr::Kind::Custom(KIND_DEVICE_RECEIPT as u16))
-        .pubkey(keys.public_key());
-    conn.send_raw(&json!(["REQ", "device-out", filter])).await?;
-    let event = publish_request(&keys, &device_pk, &device_id, &request)?;
-    conn.send_event(event).await?;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err("timed out waiting for device receipt; not running locally".into());
-        }
-        match conn.next_event(remaining).await? {
-            RelayMessage::Event { event, .. } => {
-                if u32::from(event.kind.as_u16()) != KIND_DEVICE_RECEIPT {
-                    continue;
-                }
-                if event.pubkey != device_pk {
-                    continue;
-                }
-                if let Ok(receipt) = decrypt_receipt(&keys, &event) {
-                    if receipt.request_id == request.request_id {
-                        println!("{}", serde_json::to_string_pretty(&receipt)?);
-                        if receipt.status == ReceiptStatus::Succeeded {
-                            return Ok(());
-                        }
-                        return Err(receipt
-                            .error
-                            .unwrap_or_else(|| receipt.status.status_label())
-                            .into());
-                    }
-                }
+        } => device_request_from_start(
+            &StartSessionInput {
+                tank_id: String::new(),
+                device_id: device_id.clone(),
+                checkout_path,
+                instance_id: session_id.unwrap_or_default(),
+                request_id: require_caller_request_id(&request_id.unwrap_or_default())?,
+            },
+            grant_generation,
+        )?,
+        CtlOp::CancelSession { session_id, pid } => {
+            let mut request = device_request_from_cancel(
+                &CancelSessionInput {
+                    device_id: device_id.clone(),
+                    session_id,
+                    request_id: require_caller_request_id(&request_id.unwrap_or_default())?,
+                },
+                grant_generation,
+            )?;
+            if let Some(pid) = pid {
+                request.params["pid"] = json!(pid);
             }
-            RelayMessage::Eose { .. } => {}
-            other => tracing::debug!("ctl ignored {other:?}"),
+            request
         }
+    };
+    let receipt = submit_device_request(&keys, &device_pubkey, &relay, request).await?;
+    println!("{}", serde_json::to_string_pretty(&receipt)?);
+    if receipt.status == ReceiptStatus::Succeeded {
+        return Ok(());
     }
+    Err(receipt
+        .error
+        .unwrap_or_else(|| receipt.status.status_label())
+        .into())
 }
 
 async fn coord_leader(

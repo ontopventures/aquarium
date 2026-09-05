@@ -870,6 +870,16 @@ pub fn run() {
             tray_menu::take_tray_actions,
             #[cfg(target_os = "macos")]
             tray_menu::update_tray_agent_activity,
+            aquarium_linear_connect,
+            aquarium_linear_disconnect,
+            aquarium_linear_connection,
+            aquarium_linear_search_issues,
+            aquarium_linear_get_issue,
+            aquarium_device_inspect_capabilities,
+            aquarium_device_create_checkout,
+            aquarium_device_inspect_request,
+            aquarium_device_start_session,
+            aquarium_device_cancel_session,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

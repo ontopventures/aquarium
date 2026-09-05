@@ -18,8 +18,10 @@ mod session;
 mod wire;
 
 pub use adapter::{
-    capabilities_from_inspect_evidence, op_result_from_receipt, AdapterSource, DeviceCapabilities,
-    DeviceOpResult,
+    capabilities_from_inspect_evidence, create_checkout_params, device_request_from_cancel,
+    device_request_from_checkout, device_request_from_start, op_result_from_receipt,
+    require_caller_request_id, require_repository_id, submit_device_request, AdapterSource,
+    CancelSessionInput, CreateCheckoutInput, DeviceCapabilities, DeviceOpResult, StartSessionInput,
 };
 pub use coord::{
     coord_filter, handle_coord, parse_coord_event, publish_coord, CoordBind, CoordJournal,

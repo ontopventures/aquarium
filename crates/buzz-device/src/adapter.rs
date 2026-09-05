@@ -1,11 +1,21 @@
 //! Desktop-safe typed device adapter. Never falls back to local git or spawn.
 //!
 //! Shapes match `work/ui-demo/adapter-contract.md`. The UI worktree owns
-//! desktop binding; this module is the backend mapping from `buzz-device ctl`
-//! receipts. Mock results are not produced here.
+//! desktop binding. This module is the request path: caller-stable
+//! `request_id`, required `repository_id` on checkout, and mapping from
+//! receipts. Mock results are not produced here. Adapters must not mint a
+//! request id; retries reuse the caller's id.
 
-use crate::{DeviceError, DeviceReceipt, ReceiptStatus};
+use crate::{
+    decrypt_receipt, publish_request, DeviceError, DeviceReceipt, DeviceRequest, ReceiptStatus,
+};
+use buzz_core::device::{parse_request_timestamp, DEVICE_PROTOCOL_VERSION};
+use buzz_core::kind::KIND_DEVICE_RECEIPT;
+use buzz_ws_client::{NostrWsConnection, RelayMessage};
+use nostr::{Filter, Keys, PublicKey};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::time::{Duration, Instant};
 
 /// Provenance tag. Real adapter results are always [`AdapterSource::Device`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,8 +72,165 @@ pub struct DeviceOpResult {
     /// Checkout HEAD.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub head: Option<String>,
+    /// Canonical bound repository. Never inferred from `relpath`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository_id: Option<String>,
     /// Human-readable message. Never implies local success.
     pub message: String,
+}
+
+/// Require a caller-stable device request id. Empty values fail closed so
+/// retries cannot silently mint a second mutation.
+pub fn require_caller_request_id(request_id: &str) -> Result<String, DeviceError> {
+    let id = request_id.trim();
+    if id.is_empty() {
+        return Err(DeviceError::Transport(
+            "request_id is required; adapter must not mint ids; retries reuse the caller id".into(),
+        ));
+    }
+    parse_request_timestamp(id).map_err(|_| {
+        DeviceError::Transport(
+            "request_id must match {13-digit-ms}-{32 hex}; retries reuse the caller id".into(),
+        )
+    })?;
+    Ok(id.to_string())
+}
+
+/// Require canonical repository identity. Do not infer from checkout relpath.
+pub fn require_repository_id(repository_id: &str) -> Result<String, DeviceError> {
+    let id = repository_id.trim();
+    if id.is_empty() {
+        return Err(DeviceError::Transport(
+            "repository_id is required; do not infer the repository from relpath".into(),
+        ));
+    }
+    Ok(id.to_string())
+}
+
+/// `createCheckout` input. `request_id` is caller-stable.
+#[derive(Debug, Clone)]
+pub struct CreateCheckoutInput {
+    /// Tank identity.
+    pub tank_id: String,
+    /// Selected execution host.
+    pub device_id: String,
+    /// Canonical bound repository.
+    pub repository_id: String,
+    /// Branch name.
+    pub branch: String,
+    /// Checkout relpath under the allowed root.
+    pub relpath: String,
+    /// Caller-stable request id.
+    pub request_id: String,
+}
+
+/// `startSession` input. `request_id` is caller-stable.
+#[derive(Debug, Clone)]
+pub struct StartSessionInput {
+    /// Tank identity.
+    pub tank_id: String,
+    /// Selected execution host.
+    pub device_id: String,
+    /// Host checkout path.
+    pub checkout_path: String,
+    /// Creature instance id.
+    pub instance_id: String,
+    /// Caller-stable request id.
+    pub request_id: String,
+}
+
+/// `cancelSession` input. `request_id` is caller-stable.
+#[derive(Debug, Clone)]
+pub struct CancelSessionInput {
+    /// Selected execution host.
+    pub device_id: String,
+    /// Session id from start.
+    pub session_id: String,
+    /// Caller-stable request id.
+    pub request_id: String,
+}
+
+/// Build `create_checkout` params. `repository_id` is the repo identity
+/// passed to the host; it is never taken from `relpath`.
+pub fn create_checkout_params(
+    input: &CreateCheckoutInput,
+) -> Result<serde_json::Value, DeviceError> {
+    let repository_id = require_repository_id(&input.repository_id)?;
+    if input.tank_id.trim().is_empty() || input.device_id.trim().is_empty() {
+        return Err(DeviceError::Transport(
+            "tank_id and device_id are required; refusing local fallback".into(),
+        ));
+    }
+    Ok(json!({
+        "tank_id": input.tank_id,
+        "repository_id": repository_id,
+        "branch": input.branch,
+        "relpath": input.relpath,
+        "repo_relpath": repository_id,
+        "start_rev": "HEAD",
+    }))
+}
+
+/// Build a signed request using the **caller** request id.
+pub fn device_request_from_checkout(
+    input: &CreateCheckoutInput,
+    grant_generation: u64,
+) -> Result<DeviceRequest, DeviceError> {
+    let request_id = require_caller_request_id(&input.request_id)?;
+    Ok(DeviceRequest {
+        v: DEVICE_PROTOCOL_VERSION,
+        request_id,
+        op: "create_checkout".into(),
+        grant_generation,
+        device_id: input.device_id.clone(),
+        params: create_checkout_params(input)?,
+    })
+}
+
+/// Build a signed start-session request using the caller request id.
+pub fn device_request_from_start(
+    input: &StartSessionInput,
+    grant_generation: u64,
+) -> Result<DeviceRequest, DeviceError> {
+    let request_id = require_caller_request_id(&input.request_id)?;
+    if input.device_id.trim().is_empty() || input.checkout_path.trim().is_empty() {
+        return Err(DeviceError::Transport(
+            "device_id and checkout_path are required; refusing local fallback".into(),
+        ));
+    }
+    Ok(DeviceRequest {
+        v: DEVICE_PROTOCOL_VERSION,
+        request_id,
+        op: "start_session".into(),
+        grant_generation,
+        device_id: input.device_id.clone(),
+        params: json!({
+            "checkout_path": input.checkout_path,
+            "session_id": input.instance_id,
+            "tank_id": input.tank_id,
+        }),
+    })
+}
+
+/// Build a signed cancel-session request using the caller request id.
+pub fn device_request_from_cancel(
+    input: &CancelSessionInput,
+    grant_generation: u64,
+) -> Result<DeviceRequest, DeviceError> {
+    let request_id = require_caller_request_id(&input.request_id)?;
+    if input.device_id.trim().is_empty() || input.session_id.trim().is_empty() {
+        return Err(DeviceError::Transport(
+            "device_id and session_id are required; refusing local fallback".into(),
+        ));
+    }
+    Ok(DeviceRequest {
+        v: DEVICE_PROTOCOL_VERSION,
+        request_id,
+        op: "cancel_session".into(),
+        grant_generation,
+        device_id: input.device_id.clone(),
+        params: json!({ "session_id": input.session_id }),
+    })
 }
 
 /// Map inspect-capabilities evidence onto the desktop DTO.
@@ -165,10 +332,75 @@ pub fn op_result_from_receipt(receipt: &DeviceReceipt) -> DeviceOpResult {
             .get("head")
             .and_then(|v| v.as_str())
             .map(str::to_string),
+        repository_id: evidence
+            .get("repository_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         message: receipt
             .error
             .clone()
             .unwrap_or_else(|| receipt.status.status_label()),
+    }
+}
+
+/// Publish one device request and wait for the matching receipt.
+///
+/// Requires a selected `device_pubkey`. Never runs git or agents locally.
+pub async fn submit_device_request(
+    keys: &Keys,
+    device_pubkey_hex: &str,
+    relay: &str,
+    request: DeviceRequest,
+) -> Result<DeviceReceipt, DeviceError> {
+    if device_pubkey_hex.trim().is_empty() {
+        return Err(DeviceError::Transport(
+            "device_pubkey is required; refusing to run locally".into(),
+        ));
+    }
+    let device_pk = PublicKey::from_hex(device_pubkey_hex.trim())
+        .map_err(|e| DeviceError::Transport(e.to_string()))?;
+    let mut conn = NostrWsConnection::connect_authenticated(relay, keys, None)
+        .await
+        .map_err(|e| DeviceError::Transport(e.to_string()))?;
+    let filter = Filter::new()
+        .kind(nostr::Kind::Custom(KIND_DEVICE_RECEIPT as u16))
+        .pubkey(keys.public_key());
+    conn.send_raw(&json!(["REQ", "device-out", filter]))
+        .await
+        .map_err(|e| DeviceError::Transport(e.to_string()))?;
+    let event = publish_request(keys, &device_pk, &request.device_id, &request)?;
+    conn.send_event(event)
+        .await
+        .map_err(|e| DeviceError::Transport(e.to_string()))?;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(DeviceError::Transport(
+                "timed out waiting for device receipt; not running locally".into(),
+            ));
+        }
+        match conn
+            .next_event(remaining)
+            .await
+            .map_err(|e| DeviceError::Transport(e.to_string()))?
+        {
+            RelayMessage::Event { event, .. } => {
+                if u32::from(event.kind.as_u16()) != KIND_DEVICE_RECEIPT {
+                    continue;
+                }
+                if event.pubkey != device_pk {
+                    continue;
+                }
+                if let Ok(receipt) = decrypt_receipt(keys, &event) {
+                    if receipt.request_id == request.request_id {
+                        return Ok(receipt);
+                    }
+                }
+            }
+            RelayMessage::Eose { .. } => {}
+            _ => {}
+        }
     }
 }
 
@@ -216,5 +448,69 @@ mod tests {
             result.request_id.as_deref(),
             Some("1788581600001-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
+    }
+
+    #[test]
+    fn mutating_ops_refuse_to_mint_request_id() {
+        let err = require_caller_request_id("").unwrap_err();
+        assert!(err.to_string().contains("must not mint"));
+        let err = require_caller_request_id("not-an-id").unwrap_err();
+        assert!(err.to_string().contains("13-digit-ms"));
+        let id =
+            require_caller_request_id("1788581600001-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        let again =
+            require_caller_request_id("1788581600001-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
+        assert_eq!(id, again);
+    }
+
+    #[test]
+    fn checkout_requires_repository_id_not_relpath() {
+        let err = require_repository_id("").unwrap_err();
+        assert!(err.to_string().contains("relpath"));
+        let input = CreateCheckoutInput {
+            tank_id: "tank-1".into(),
+            device_id: "dev-1".into(),
+            repository_id: String::new(),
+            branch: "main".into(),
+            relpath: "tanks/t1".into(),
+            request_id: "1788581600001-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        };
+        let err = create_checkout_params(&input).unwrap_err();
+        assert!(err.to_string().contains("repository_id"));
+        let mut ok = input.clone();
+        ok.repository_id = "repo".into();
+        let params = create_checkout_params(&ok).unwrap();
+        assert_eq!(params["repository_id"], "repo");
+        assert_eq!(params["repo_relpath"], "repo");
+        assert_eq!(params["relpath"], "tanks/t1");
+        let request = device_request_from_checkout(&ok, 1).unwrap();
+        assert_eq!(
+            request.request_id,
+            "1788581600001-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+        let retry = device_request_from_checkout(&ok, 1).unwrap();
+        assert_eq!(retry.request_id, request.request_id);
+    }
+
+    #[test]
+    fn start_and_cancel_reuse_caller_request_id() {
+        let start = StartSessionInput {
+            tank_id: "tank-1".into(),
+            device_id: "dev-1".into(),
+            checkout_path: "/tmp/tanks/t1".into(),
+            instance_id: "inst-1".into(),
+            request_id: "1788581600001-cccccccccccccccccccccccccccccccc".into(),
+        };
+        let a = device_request_from_start(&start, 1).unwrap();
+        let b = device_request_from_start(&start, 1).unwrap();
+        assert_eq!(a.request_id, b.request_id);
+        let cancel = CancelSessionInput {
+            device_id: "dev-1".into(),
+            session_id: "sess-1".into(),
+            request_id: "1788581600001-cccccccccccccccccccccccccccccccc".into(),
+        };
+        let c = device_request_from_cancel(&cancel, 1).unwrap();
+        assert_eq!(c.request_id, a.request_id);
+        assert_eq!(c.params["session_id"], "sess-1");
     }
 }

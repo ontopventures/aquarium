@@ -338,22 +338,34 @@ fn execute(
                 .get("start_rev")
                 .and_then(|v| v.as_str())
                 .unwrap_or("HEAD");
-            let repo_relpath = request
+            let repository_id = request
                 .params
-                .get("repo_relpath")
+                .get("repository_id")
                 .and_then(|v| v.as_str())
-                .unwrap_or("repo");
+                .or_else(|| request.params.get("repo_relpath").and_then(|v| v.as_str()))
+                .ok_or_else(|| {
+                    DeviceError::Transport(
+                        "create_checkout needs params.repository_id; do not infer from relpath"
+                            .into(),
+                    )
+                })?;
+            if repository_id.trim().is_empty() {
+                return Err(DeviceError::Transport(
+                    "create_checkout needs params.repository_id; do not infer from relpath".into(),
+                ));
+            }
             let evidence: CheckoutEvidence = create_worktree(
                 &service.allowed_root,
-                repo_relpath,
+                repository_id,
                 relpath,
                 branch,
                 start_rev,
             )?;
-            let repo = service.allowed_root.join(repo_relpath);
+            let repo = service.allowed_root.join(repository_id);
             let list = list_worktrees(&repo).unwrap_or_default();
             Ok(serde_json::json!({
                 "tank_id": tank_id,
+                "repository_id": repository_id,
                 "path": evidence.path,
                 "branch": evidence.branch,
                 "head": evidence.head,
@@ -381,12 +393,38 @@ fn execute(
             Ok(serde_json::to_value(evidence).map_err(|e| DeviceError::Agent(e.to_string()))?)
         }
         DeviceOp::CancelSession => {
+            let session_id = request
+                .params
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             let pid = request
                 .params
                 .get("pid")
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| DeviceError::Agent("cancel_session needs params.pid".into()))?
-                as u32;
+                .map(|n| n as u32);
+            let pid = match (pid, session_id.as_deref()) {
+                (Some(pid), _) => pid,
+                (None, Some(session_id)) if !session_id.is_empty() => {
+                    let sessions = service
+                        .sessions
+                        .lock()
+                        .map_err(|e| DeviceError::Agent(e.to_string()))?;
+                    sessions
+                        .iter()
+                        .find_map(|(pid, id)| (id == session_id).then_some(*pid))
+                        .ok_or_else(|| {
+                            DeviceError::Agent(
+                                "session_id is not a session owned by this host".into(),
+                            )
+                        })?
+                }
+                _ => {
+                    return Err(DeviceError::Agent(
+                        "cancel_session needs params.session_id or params.pid".into(),
+                    ));
+                }
+            };
             let known = service
                 .sessions
                 .lock()
@@ -401,7 +439,7 @@ fn execute(
             if let Ok(mut sessions) = service.sessions.lock() {
                 sessions.remove(&pid);
             }
-            Ok(serde_json::json!({"cancelled_pid": pid}))
+            Ok(serde_json::json!({"cancelled_pid": pid, "session_id": session_id}))
         }
     }
 }
