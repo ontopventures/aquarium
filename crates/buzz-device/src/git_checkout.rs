@@ -46,18 +46,26 @@ pub fn create_worktree(
             worktree.display()
         )));
     }
+    if branch.starts_with('-') || start_rev.starts_with('-') {
+        return Err(DeviceError::Git(
+            "branch/rev must not start with '-'".into(),
+        ));
+    }
     if let Some(parent) = worktree.parent() {
         std::fs::create_dir_all(parent).map_err(|e| DeviceError::Path(e.to_string()))?;
     }
+    let worktree_str = worktree
+        .to_str()
+        .ok_or_else(|| DeviceError::Git("worktree path is not utf-8".into()))?
+        .to_string();
     run_git(
         &[
             "worktree",
             "add",
             "-b",
             branch,
-            worktree
-                .to_str()
-                .ok_or_else(|| DeviceError::Git("worktree path is not utf-8".into()))?,
+            "--",
+            worktree_str.as_str(),
             start_rev,
         ],
         Some(&repo),

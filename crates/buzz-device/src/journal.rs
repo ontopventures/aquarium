@@ -47,6 +47,9 @@ pub struct JournalEntry {
     /// Error message when failed/rejected.
     #[serde(default)]
     pub error: Option<String>,
+    /// Original params, used to reconcile after a crash.
+    #[serde(default)]
+    pub params: serde_json::Value,
 }
 
 /// Filesystem-backed journal (`state_dir/journal/{id}.json`).
@@ -134,6 +137,7 @@ mod tests {
             grant_generation: 1,
             outcome: serde_json::json!({"ok": true}),
             error: None,
+            params: serde_json::json!({}),
         };
         journal.put(&entry).unwrap();
         let loaded = journal.get(&entry.request_id).unwrap().unwrap();

@@ -47,13 +47,17 @@ pub fn spawn_fixture_agent(
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::null());
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| DeviceError::Agent(format!("spawn: {e}")))?;
     let pid = child.id();
-    std::mem::forget(child);
     let proof = cwd.join(".aquarium-session-cwd");
-    wait_for_file(&proof, 50)?;
+    if let Err(error) = wait_for_file(&proof, 50) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    std::mem::forget(child);
     let recorded = std::fs::read_to_string(&proof)
         .map_err(|e| DeviceError::Agent(format!("cwd proof: {e}")))?;
     let recorded = recorded.trim().to_string();
@@ -71,17 +75,20 @@ pub fn spawn_fixture_agent(
     })
 }
 
-/// Terminate a previously spawned session.
+/// Terminate a previously spawned session. `pid` must be a host-tracked session.
 pub fn cancel_session(pid: u32) -> Result<(), DeviceError> {
+    if pid == 0 {
+        return Err(DeviceError::Agent("refusing to signal pid 0".into()));
+    }
     let status = Command::new("kill")
         .args(["-TERM", &pid.to_string()])
         .status()
         .map_err(|e| DeviceError::Agent(format!("kill: {e}")))?;
     if !status.success() {
-        return Err(DeviceError::Agent(format!(
-            "kill -TERM {pid} exited {status}"
-        )));
+        // ESRCH / already-stopped is success for cancel.
+        return Ok(());
     }
+    let _ = status;
     Ok(())
 }
 

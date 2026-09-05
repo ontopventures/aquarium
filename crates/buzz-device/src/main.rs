@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 use buzz_core::device::DEVICE_PROTOCOL_VERSION;
 use buzz_core::kind::{KIND_DEVICE_RECEIPT, KIND_DEVICE_REQUEST};
 use buzz_device::{
-    decrypt_receipt, decrypt_request, generate_request_id, handle_request, publish_receipt,
-    publish_request, run_agent_fixture, run_mux, run_mux_listener, DeviceRequest, DeviceService,
-    GrantFile, ReceiptStatus,
+    decrypt_receipt, decrypt_request, fingerprint_request, generate_request_id, handle_request,
+    publish_receipt, publish_request, run_agent_fixture, run_mux, run_mux_listener, DeviceReceipt,
+    DeviceRequest, DeviceService, GrantFile, HandleOutcome, ReceiptStatus,
 };
 use buzz_ws_client::{NostrWsConnection, RelayMessage};
 use clap::{Parser, Subcommand};
@@ -222,7 +222,24 @@ async fn serve(
                     }
                 };
                 let now = chrono::Utc::now().timestamp_millis().max(0) as u64;
-                let outcome = handle_request(&service, &actor, &host_hex, &request, now)?;
+                let outcome = match handle_request(&service, &actor, &host_hex, &request, now) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        tracing::warn!("handle_request failed: {error}");
+                        HandleOutcome {
+                            receipt: DeviceReceipt {
+                                v: request.v,
+                                request_id: request.request_id.clone(),
+                                fingerprint: fingerprint_request(&request)
+                                    .unwrap_or_else(|_| "invalid".into()),
+                                status: ReceiptStatus::Failed,
+                                evidence: serde_json::Value::Null,
+                                error: Some(error.to_string()),
+                            },
+                            mutated: false,
+                        }
+                    }
+                };
                 let actor_pk = PublicKey::from_hex(&actor)?;
                 let receipt_event =
                     publish_receipt(&keys, &actor_pk, &service.grant.device_id, &outcome.receipt)?;

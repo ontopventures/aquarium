@@ -180,8 +180,6 @@ pub const P_GATED_KINDS: &[u32] = &[
     // readable by any unauthenticated or non-owner party, including via `ids`
     // filters — see NIP-AM §Relay Behavior.
     KIND_AGENT_TURN_METRIC,
-    KIND_DEVICE_REQUEST,
-    KIND_DEVICE_RECEIPT,
 ];
 
 /// NIP-AP: Agent Persona (parameterized replaceable, owner-authored).

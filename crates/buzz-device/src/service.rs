@@ -6,7 +6,9 @@ use crate::session::{cancel_session, spawn_fixture_agent, SessionEvidence};
 use crate::wire::{fingerprint_request, DeviceReceipt, DeviceRequest, ReceiptStatus};
 use crate::{DeviceError, GrantFile};
 use buzz_core::device::{check_request_freshness, DeviceOp};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Outcome of handling one request.
 #[derive(Debug, Clone)]
@@ -24,6 +26,7 @@ pub struct DeviceService {
     journal: Journal,
     allowed_root: PathBuf,
     agent_command: Option<Vec<String>>,
+    sessions: Mutex<HashMap<u32, String>>,
 }
 
 impl DeviceService {
@@ -44,6 +47,7 @@ impl DeviceService {
             grant,
             allowed_root,
             agent_command,
+            sessions: Mutex::new(HashMap::new()),
         })
     }
 
@@ -53,21 +57,34 @@ impl DeviceService {
             if row.state != RequestState::Executing {
                 continue;
             }
+            if row.op == DeviceOp::CreateCheckout.as_str() {
+                let relpath = row.params.get("relpath").and_then(|v| v.as_str());
+                if let Some(relpath) = relpath {
+                    let path = self.allowed_root.join(relpath);
+                    if path.join(".git").exists() || path.join("README").exists() {
+                        row.state = RequestState::Succeeded;
+                        row.error = None;
+                        row.outcome = serde_json::json!({
+                            "path": path.display().to_string(),
+                            "reconciled": true,
+                        });
+                        self.journal.put(&row)?;
+                        continue;
+                    }
+                    if !path.exists() {
+                        // Safe to retry the same request id.
+                        row.state = RequestState::Accepted;
+                        row.error = None;
+                        self.journal.put(&row)?;
+                        continue;
+                    }
+                }
+            }
             row.state = RequestState::Uncertain;
             row.error = Some(
                 "host restarted while executing; outcome is uncertain and will not be retried"
                     .into(),
             );
-            if row.op == DeviceOp::CreateCheckout.as_str() {
-                if let Some(path) = row.outcome.get("path").and_then(|v| v.as_str()) {
-                    if Path::new(path).join(".git").exists()
-                        || Path::new(path).join("README").exists()
-                    {
-                        row.state = RequestState::Succeeded;
-                        row.error = None;
-                    }
-                }
-            }
             self.journal.put(&row)?;
         }
         Ok(())
@@ -135,10 +152,12 @@ pub fn handle_request(
                 mutated: false,
             });
         }
-        return Ok(HandleOutcome {
-            receipt: receipt_from_entry(&existing),
-            mutated: false,
-        });
+        if existing.state != RequestState::Accepted {
+            return Ok(HandleOutcome {
+                receipt: receipt_from_entry(&existing),
+                mutated: false,
+            });
+        }
     }
 
     let op = DeviceOp::parse(&request.op)
@@ -152,6 +171,7 @@ pub fn handle_request(
         grant_generation: request.grant_generation,
         outcome: serde_json::Value::Null,
         error: None,
+        params: request.params.clone(),
     };
     service.journal.put(&entry)?;
     entry.state = RequestState::Executing;
@@ -238,6 +258,7 @@ fn reject(
         grant_generation: request.grant_generation,
         outcome: serde_json::Value::Null,
         error: Some(error.to_string()),
+        params: request.params.clone(),
     };
     let _ = service.journal.put(&entry);
     Ok(HandleOutcome {
@@ -347,6 +368,9 @@ fn execute(
                 &session_id,
                 service.agent_command.as_deref(),
             )?;
+            if let Ok(mut sessions) = service.sessions.lock() {
+                sessions.insert(evidence.pid, evidence.session_id.clone());
+            }
             Ok(serde_json::to_value(evidence).map_err(|e| DeviceError::Agent(e.to_string()))?)
         }
         DeviceOp::CancelSession => {
@@ -354,8 +378,22 @@ fn execute(
                 .params
                 .get("pid")
                 .and_then(|v| v.as_u64())
-                .ok_or_else(|| DeviceError::Agent("cancel_session needs params.pid".into()))?;
-            cancel_session(pid as u32)?;
+                .ok_or_else(|| DeviceError::Agent("cancel_session needs params.pid".into()))?
+                as u32;
+            let known = service
+                .sessions
+                .lock()
+                .map_err(|e| DeviceError::Agent(e.to_string()))?
+                .contains_key(&pid);
+            if !known {
+                return Err(DeviceError::Agent(
+                    "pid is not a session owned by this host".into(),
+                ));
+            }
+            cancel_session(pid)?;
+            if let Ok(mut sessions) = service.sessions.lock() {
+                sessions.remove(&pid);
+            }
             Ok(serde_json::json!({"cancelled_pid": pid}))
         }
     }
