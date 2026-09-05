@@ -19,7 +19,7 @@ export type CollapsibleSidebarGroup =
   | "forums"
   | "directMessages";
 
-export type CreateChannelKind = "stream" | "forum";
+export type CreateChannelKind = "stream" | "forum" | "tank";
 
 export type AppSidebarProps = {
   addCommunityPrefill?: AddCommunityPrefillRequest | null;

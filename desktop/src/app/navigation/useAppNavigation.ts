@@ -116,6 +116,18 @@ export function useAppNavigation() {
     [commitNavigation],
   );
 
+  const goTank = React.useCallback(
+    (tankId: string, behavior?: NavigationBehavior) =>
+      commitNavigation(
+        {
+          to: "/tanks/$tankId",
+          params: { tankId },
+        },
+        behavior,
+      ),
+    [commitNavigation],
+  );
+
   const goProjects = React.useCallback(
     (behavior?: NavigationBehavior) =>
       commitNavigation(
@@ -469,6 +481,7 @@ export function useAppNavigation() {
     goNewWorkflowForChannel,
     goProject,
     goProjects,
+    goTank,
     goPulse,
     goProfile,
     goSettings,

@@ -1,0 +1,58 @@
+.aquarium-creature-motion {
+  transform-origin: center;
+}
+
+.aquarium-creature-motion[data-animation="idle"] {
+  animation: aquarium-idle 1.6s ease-in-out infinite;
+}
+
+.aquarium-creature-motion[data-animation="swim"] {
+  animation: aquarium-swim 0.7s ease-in-out infinite;
+}
+
+.aquarium-creature-frame-b {
+  animation: aquarium-pixel-frame 0.8s steps(1, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aquarium-creature-motion[data-animation="idle"],
+  .aquarium-creature-motion[data-animation="swim"],
+  .aquarium-creature-frame-b {
+    animation: none;
+  }
+
+  .aquarium-creature-frame-b {
+    opacity: 0;
+  }
+}
+
+@keyframes aquarium-idle {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-0.125rem);
+  }
+}
+
+@keyframes aquarium-swim {
+  0%,
+  100% {
+    transform: translateX(0) rotate(-4deg);
+  }
+  50% {
+    transform: translateX(0.15rem) rotate(4deg);
+  }
+}
+
+@keyframes aquarium-pixel-frame {
+  0%,
+  49% {
+    opacity: 0;
+  }
+  50%,
+  100% {
+    opacity: 1;
+  }
+}

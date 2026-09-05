@@ -48,6 +48,8 @@ import {
   SectionActionsMenu,
   SectionQuickAction,
 } from "@/features/sidebar/ui/CustomChannelSection";
+import { useAquariumStore } from "@/features/aquarium/store";
+import { TankSidebarSection } from "@/features/aquarium/ui/TankSidebarSection";
 import { CreateChannelDialog } from "@/features/sidebar/ui/CreateChannelDialog";
 import { SidebarProfileCard } from "@/features/sidebar/ui/SidebarProfileCard";
 import { HuddleProfileControl } from "@/features/huddle";
@@ -462,12 +464,15 @@ export function AppSidebar({
     profile?.displayName?.trim() ||
     fallbackDisplayName?.trim() ||
     "Current identity";
+  const aquariumProvisioning = useAquariumStore().provisioning;
   const isCreatingAny =
     createDialogKind === "stream"
       ? isCreatingChannel
       : createDialogKind === "forum"
         ? isCreatingForum
-        : false;
+        : createDialogKind === "tank"
+          ? aquariumProvisioning
+          : false;
 
   const handleCreateFromDialog = React.useCallback(
     async (input: {
@@ -727,6 +732,9 @@ export function AppSidebar({
                       onLeaveChannel={requestLeaveChannel}
                     />
                   </SidebarDndContext>
+                  <TankSidebarSection
+                    onCreateTank={() => openCreateDialog("tank")}
+                  />
                   <FeatureGate feature="forum">
                     <ChannelGroupSection
                       createLabel="New forum"

@@ -288,7 +288,7 @@ export function SectionActionsMenu({
   );
 }
 
-function ChannelSectionHeader({
+export function ChannelSectionHeader({
   contentId,
   isCollapsed,
   onToggleCollapsed,

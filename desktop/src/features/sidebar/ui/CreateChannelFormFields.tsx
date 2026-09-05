@@ -1,9 +1,11 @@
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown, Fish, Hash, MessagesSquare, Plus } from "lucide-react";
 import * as React from "react";
 
+import { TankCreateFields } from "@/features/aquarium/ui/TankCreateFields";
 import { TemplateFormDialog } from "@/features/settings/ui/ChannelTemplatesSettingsCard";
 import { cn } from "@/shared/lib/cn";
 import { Button } from "@/shared/ui/button";
+import { SegmentedControl } from "@/shared/ui/segmented-control";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,6 +44,7 @@ export function CreateChannelFormFields({
   form: CreateChannelFormState;
 }) {
   const { channelKind, kindLabel, isCreating } = form;
+  const isTank = channelKind === "tank";
   const [isCreateTemplateOpen, setIsCreateTemplateOpen] = React.useState(false);
   const selectedTemplate = form.templates.find(
     (template) => template.id === form.selectedTemplateId,
@@ -66,6 +69,19 @@ export function CreateChannelFormFields({
 
   return (
     <div className="space-y-5">
+      <SegmentedControl
+        legend="What to create"
+        onValueChange={form.setChannelKind}
+        optionTestIdPrefix="create-space-kind"
+        options={[
+          { value: "stream", label: "Channel", Icon: Hash },
+          { value: "forum", label: "Forum", Icon: MessagesSquare },
+          { value: "tank", label: "Tank", Icon: Fish },
+        ]}
+        size="wide"
+        testId="create-space-kind"
+        value={channelKind}
+      />
       <div className="space-y-1.5">
         <label
           className="text-sm font-medium text-foreground"
@@ -92,7 +108,11 @@ export function CreateChannelFormFields({
             id="create-channel-name"
             onChange={(event) => form.setName(event.target.value)}
             placeholder={
-              channelKind === "forum" ? "design-discussions" : "release-notes"
+              channelKind === "forum"
+                ? "design-discussions"
+                : channelKind === "tank"
+                  ? "Auth login polish"
+                  : "release-notes"
             }
             ref={form.nameInputRef}
             spellCheck={false}
@@ -119,101 +139,113 @@ export function CreateChannelFormFields({
             disabled={isCreating}
             id="create-channel-description"
             onChange={(event) => form.setDescription(event.target.value)}
-            placeholder={`What this ${kindLabel} is for`}
+            placeholder={
+              isTank ? "What this tank is for" : `What this ${kindLabel} is for`
+            }
             rows={2}
             value={form.description}
           />
         </div>
       </div>
 
-      <ChannelTypeSettings
-        disabled={isCreating}
-        label="Type"
-        onTemporaryChange={form.setEphemeral}
-        onTtlSecondsChange={form.setTtlSeconds}
-        temporary={form.ephemeral}
-        testIdPrefix="create-channel"
-        ttlSeconds={form.ttlSeconds}
-        variant="segmented"
-      />
+      {isTank ? (
+        <TankCreateFields disabled={isCreating} fields={form.tankFields} />
+      ) : null}
 
-      <ChannelPermissionsSettings
-        disabled={isCreating}
-        onVisibilityChange={form.setVisibility}
-        testIdPrefix="create-channel"
-        visibility={form.visibility}
-        variant="segmented"
-      />
-
-      <div
-        className="flex min-h-12 items-center justify-between gap-4 rounded-xl border border-input bg-background px-3 py-3"
-        data-testid="create-channel-template-container"
-      >
-        <span
-          className={cn(
-            "text-sm font-medium text-foreground",
-            isCreating && "opacity-50",
-          )}
-        >
-          Template
-          <span className={CREATE_LABEL_OPTIONAL_CLASS}>Optional</span>
-        </span>
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              aria-label={`Template: ${selectedTemplate?.name ?? "None"}`}
-              className="-mr-2.5 ml-auto h-9 min-w-0 max-w-[60%] justify-end px-2.5 text-right text-sm font-medium text-foreground hover:bg-muted/50"
-              data-testid="create-channel-template"
-              disabled={isCreating}
-              id="create-channel-template"
-              type="button"
-              variant="ghost"
-            >
-              <span className="truncate text-right">
-                {selectedTemplate?.name ?? "None"}
-              </span>
-              <ChevronDown className="size-4 shrink-0 text-muted-foreground/70" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            onCloseAutoFocus={(event) => event.preventDefault()}
-            style={{
-              minWidth: "var(--radix-dropdown-menu-trigger-width)",
-            }}
-          >
-            <DropdownMenuRadioGroup
-              onValueChange={(templateId) =>
-                form.handleTemplateChange(
-                  templateId === NO_TEMPLATE_VALUE ? "" : templateId,
-                )
-              }
-              value={form.selectedTemplateId ?? NO_TEMPLATE_VALUE}
-            >
-              <DropdownMenuRadioItem value={NO_TEMPLATE_VALUE}>
-                None
-              </DropdownMenuRadioItem>
-              {form.templates.map((template) => (
-                <DropdownMenuRadioItem key={template.id} value={template.id}>
-                  {template.name}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => setIsCreateTemplateOpen(true)}>
-              <Plus className="size-4" />
-              Create new channel template…
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <TemplateFormDialog
-          onCreated={form.handleTemplateCreated}
-          onOpenChange={setIsCreateTemplateOpen}
-          open={isCreateTemplateOpen}
-          template={null}
+      {isTank ? null : (
+        <ChannelTypeSettings
+          disabled={isCreating}
+          label="Type"
+          onTemporaryChange={form.setEphemeral}
+          onTtlSecondsChange={form.setTtlSeconds}
+          temporary={form.ephemeral}
+          testIdPrefix="create-channel"
+          ttlSeconds={form.ttlSeconds}
+          variant="segmented"
         />
-      </div>
-      {selectedTemplateSummary ? (
+      )}
+
+      {isTank ? null : (
+        <ChannelPermissionsSettings
+          disabled={isCreating}
+          onVisibilityChange={form.setVisibility}
+          testIdPrefix="create-channel"
+          visibility={form.visibility}
+          variant="segmented"
+        />
+      )}
+
+      {isTank ? null : (
+        <div
+          className="flex min-h-12 items-center justify-between gap-4 rounded-xl border border-input bg-background px-3 py-3"
+          data-testid="create-channel-template-container"
+        >
+          <span
+            className={cn(
+              "text-sm font-medium text-foreground",
+              isCreating && "opacity-50",
+            )}
+          >
+            Template
+            <span className={CREATE_LABEL_OPTIONAL_CLASS}>Optional</span>
+          </span>
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button
+                aria-label={`Template: ${selectedTemplate?.name ?? "None"}`}
+                className="-mr-2.5 ml-auto h-9 min-w-0 max-w-[60%] justify-end px-2.5 text-right text-sm font-medium text-foreground hover:bg-muted/50"
+                data-testid="create-channel-template"
+                disabled={isCreating}
+                id="create-channel-template"
+                type="button"
+                variant="ghost"
+              >
+                <span className="truncate text-right">
+                  {selectedTemplate?.name ?? "None"}
+                </span>
+                <ChevronDown className="size-4 shrink-0 text-muted-foreground/70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              onCloseAutoFocus={(event) => event.preventDefault()}
+              style={{
+                minWidth: "var(--radix-dropdown-menu-trigger-width)",
+              }}
+            >
+              <DropdownMenuRadioGroup
+                onValueChange={(templateId) =>
+                  form.handleTemplateChange(
+                    templateId === NO_TEMPLATE_VALUE ? "" : templateId,
+                  )
+                }
+                value={form.selectedTemplateId ?? NO_TEMPLATE_VALUE}
+              >
+                <DropdownMenuRadioItem value={NO_TEMPLATE_VALUE}>
+                  None
+                </DropdownMenuRadioItem>
+                {form.templates.map((template) => (
+                  <DropdownMenuRadioItem key={template.id} value={template.id}>
+                    {template.name}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setIsCreateTemplateOpen(true)}>
+                <Plus className="size-4" />
+                Create new channel template…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <TemplateFormDialog
+            onCreated={form.handleTemplateCreated}
+            onOpenChange={setIsCreateTemplateOpen}
+            open={isCreateTemplateOpen}
+            template={null}
+          />
+        </div>
+      )}
+      {selectedTemplateSummary && !isTank ? (
         <p
           className="-mt-3 px-3 text-xs text-muted-foreground"
           data-testid="create-channel-template-summary"

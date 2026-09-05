@@ -16,6 +16,7 @@ import { Route as workflowsDotworkflowIdRouteImport } from "./routes/workflows.$
 import { Route as projectsDotprojectIdRouteImport } from "./routes/projects.$projectId";
 import { Route as messagesDotnewRouteImport } from "./routes/messages.new";
 import { Route as channelsDotchannelIdRouteImport } from "./routes/channels.$channelId";
+import { Route as tanksDottankIdRouteImport } from "./routes/tanks.$tankId";
 import { Route as channelsDotchannelIdDotpostsDotpostIdRouteImport } from "./routes/channels.$channelId.posts.$postId";
 
 const workflowsRoute = workflowsRouteImport.update({
@@ -73,6 +74,11 @@ const channelsDotchannelIdRoute = channelsDotchannelIdRouteImport.update({
   path: "/channels/$channelId",
   getParentRoute: () => rootRouteImport,
 } as any);
+const tanksDottankIdRoute = tanksDottankIdRouteImport.update({
+  id: "/tanks/$tankId",
+  path: "/tanks/$tankId",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const channelsDotchannelIdDotpostsDotpostIdRoute =
   channelsDotchannelIdDotpostsDotpostIdRouteImport.update({
     id: "/channels/$channelId/posts/$postId",
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   "/settings": typeof settingsRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
+  "/tanks/$tankId": typeof tanksDottankIdRoute;
   "/messages/new": typeof messagesDotnewRoute;
   "/projects/$projectId": typeof projectsDotprojectIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   "/settings": typeof settingsRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
+  "/tanks/$tankId": typeof tanksDottankIdRoute;
   "/messages/new": typeof messagesDotnewRoute;
   "/projects/$projectId": typeof projectsDotprojectIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   "/settings": typeof settingsRoute;
   "/workflows": typeof workflowsRoute;
   "/channels/$channelId": typeof channelsDotchannelIdRoute;
+  "/tanks/$tankId": typeof tanksDottankIdRoute;
   "/messages/new": typeof messagesDotnewRoute;
   "/projects/$projectId": typeof projectsDotprojectIdRoute;
   "/workflows/$workflowId": typeof workflowsDotworkflowIdRoute;
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | "/settings"
     | "/workflows"
     | "/channels/$channelId"
+    | "/tanks/$tankId"
     | "/messages/new"
     | "/projects/$projectId"
     | "/workflows/$workflowId"
@@ -148,6 +158,7 @@ export interface FileRouteTypes {
     | "/settings"
     | "/workflows"
     | "/channels/$channelId"
+    | "/tanks/$tankId"
     | "/messages/new"
     | "/projects/$projectId"
     | "/workflows/$workflowId"
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | "/settings"
     | "/workflows"
     | "/channels/$channelId"
+    | "/tanks/$tankId"
     | "/messages/new"
     | "/projects/$projectId"
     | "/workflows/$workflowId"
@@ -177,6 +189,7 @@ export interface RootRouteChildren {
   settingsRoute: typeof settingsRoute;
   workflowsRoute: typeof workflowsRoute;
   channelsDotchannelIdRoute: typeof channelsDotchannelIdRoute;
+  tanksDottankIdRoute: typeof tanksDottankIdRoute;
   messagesDotnewRoute: typeof messagesDotnewRoute;
   projectsDotprojectIdRoute: typeof projectsDotprojectIdRoute;
   workflowsDotworkflowIdRoute: typeof workflowsDotworkflowIdRoute;
@@ -262,6 +275,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof channelsDotchannelIdRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/tanks/$tankId": {
+      id: "/tanks/$tankId";
+      path: "/tanks/$tankId";
+      fullPath: "/tanks/$tankId";
+      preLoaderRoute: typeof tanksDottankIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/channels/$channelId/posts/$postId": {
       id: "/channels/$channelId/posts/$postId";
       path: "/channels/$channelId/posts/$postId";
@@ -281,6 +301,7 @@ const rootRouteChildren: RootRouteChildren = {
   settingsRoute: settingsRoute,
   workflowsRoute: workflowsRoute,
   channelsDotchannelIdRoute: channelsDotchannelIdRoute,
+  tanksDottankIdRoute: tanksDottankIdRoute,
   messagesDotnewRoute: messagesDotnewRoute,
   projectsDotprojectIdRoute: projectsDotprojectIdRoute,
   workflowsDotworkflowIdRoute: workflowsDotworkflowIdRoute,

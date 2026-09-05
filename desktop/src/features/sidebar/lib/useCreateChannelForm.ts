@@ -2,9 +2,14 @@ import * as React from "react";
 
 import { useChannelTemplatesQuery } from "@/features/channel-templates/hooks";
 import { DEFAULT_EPHEMERAL_TTL_SECONDS } from "@/features/channels/lib/ephemeralChannel";
+import { provisionTank, useAquariumStore } from "@/features/aquarium/store";
+import {
+  useTankCreateFields,
+  type TankCreateFieldState,
+} from "@/features/aquarium/ui/TankCreateFields";
 import type { ChannelTemplate, ChannelVisibility } from "@/shared/api/types";
 
-export type CreateChannelKind = "stream" | "forum";
+export type CreateChannelKind = "stream" | "forum" | "tank";
 
 export type CreateChannelInput = {
   name: string;
@@ -25,12 +30,15 @@ type UseCreateChannelFormOptions = {
   isCreating: boolean;
   onCreate: (input: CreateChannelInput) => Promise<void>;
   onCreated?: () => void;
+  onTankCreated?: (tankId: string) => void;
   autoFocusName?: boolean;
 };
 
 export type CreateChannelFormState = {
   channelKind: CreateChannelKind;
+  setChannelKind: (kind: CreateChannelKind) => void;
   kindLabel: string;
+  tankFields: TankCreateFieldState;
   name: string;
   setName: (value: string) => void;
   description: string;
@@ -64,8 +72,13 @@ export function useCreateChannelForm({
   isCreating,
   onCreate,
   onCreated,
+  onTankCreated,
   autoFocusName = true,
 }: UseCreateChannelFormOptions): CreateChannelFormState {
+  const [spaceKind, setSpaceKind] =
+    React.useState<CreateChannelKind>(channelKind);
+  const tankFields = useTankCreateFields();
+  const aquarium = useAquariumStore();
   const [name, setName] = React.useState(initialName ?? "");
   const [description, setDescription] = React.useState("");
   const [visibility, setVisibility] = React.useState<ChannelVisibility>("open");
@@ -83,10 +96,12 @@ export function useCreateChannelForm({
   const templatesQuery = useChannelTemplatesQuery();
   const templates = templatesQuery.data ?? [];
 
-  const kindLabel = channelKind === "forum" ? "forum" : "channel";
+  const kindLabel =
+    spaceKind === "forum" ? "forum" : spaceKind === "tank" ? "tank" : "channel";
   React.useEffect(() => {
     if (!active) return;
 
+    setSpaceKind(channelKind);
     setName(initialName ?? "");
     setDescription("");
     setVisibility("open");
@@ -95,6 +110,7 @@ export function useCreateChannelForm({
     setErrorMessage(null);
     setSelectedTemplateId(null);
     visibilityTouchedRef.current = false;
+    tankFields.reset();
 
     if (!autoFocusName) return;
 
@@ -115,7 +131,15 @@ export function useCreateChannelForm({
       input.setSelectionRange(end, end);
     }, 50);
     return () => globalThis.clearTimeout(timerId);
-  }, [active, autoFocusName, initialName]);
+  }, [active, autoFocusName, channelKind, initialName, tankFields.reset]);
+
+  React.useEffect(() => {
+    if (spaceKind !== "tank" || !tankFields.issueId) return;
+    const issue = aquarium.issues.find(
+      (item) => item.id === tankFields.issueId,
+    );
+    if (issue && !name.trim()) setName(issue.title);
+  }, [aquarium.issues, name, spaceKind, tankFields.issueId]);
 
   const applyTemplate = React.useCallback((template: ChannelTemplate) => {
     setSelectedTemplateId(template.id);
@@ -155,6 +179,22 @@ export function useCreateChannelForm({
 
       void (async () => {
         try {
+          if (spaceKind === "tank") {
+            const result = await provisionTank({
+              title: trimmedName,
+              description: description.trim() || undefined,
+              issue_id: tankFields.issueId,
+              repository_id: tankFields.repositoryId,
+              device_id: tankFields.deviceId,
+            });
+            if (!result.ok) {
+              setErrorMessage(result.error);
+              return;
+            }
+            onTankCreated?.(result.tank.id);
+            onCreated?.();
+            return;
+          }
           await onCreate({
             name: trimmedName,
             description: description.trim() || undefined,
@@ -179,15 +219,27 @@ export function useCreateChannelForm({
       name,
       onCreate,
       onCreated,
+      onTankCreated,
       selectedTemplateId,
+      spaceKind,
+      tankFields.deviceId,
+      tankFields.issueId,
+      tankFields.repositoryId,
       ttlSeconds,
       visibility,
     ],
   );
 
+  const tankReady =
+    tankFields.repositoryId.length > 0 && tankFields.deviceId.length > 0;
+  const creating =
+    isCreating || (spaceKind === "tank" && aquarium.provisioning);
+
   return {
-    channelKind,
+    channelKind: spaceKind,
+    setChannelKind: setSpaceKind,
     kindLabel,
+    tankFields,
     name,
     setName: (value: string) => {
       setName(value);
@@ -213,8 +265,11 @@ export function useCreateChannelForm({
     handleTemplateCreated: applyTemplate,
     templates,
     nameInputRef,
-    isCreating,
-    canSubmit: name.trim().length > 0 && !isCreating,
+    isCreating: creating,
+    canSubmit:
+      name.trim().length > 0 &&
+      !creating &&
+      (spaceKind !== "tank" || tankReady),
     handleSubmit,
   };
 }

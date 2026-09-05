@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
 
+import { useAppNavigation } from "@/app/navigation/useAppNavigation";
 import type { ChannelVisibility } from "@/shared/api/types";
 import { ChooserDialogContent } from "@/shared/ui/chooser-dialog-content";
 import { Dialog } from "@/shared/ui/dialog";
 
 import {
   type CreateChannelInput,
+  type CreateChannelKind,
   useCreateChannelForm,
 } from "@/features/sidebar/lib/useCreateChannelForm";
 import {
@@ -14,11 +16,9 @@ import {
   CreateChannelFormFooter,
 } from "@/features/sidebar/ui/CreateChannelFormFields";
 
-type ChannelKind = "stream" | "forum";
-
 type CreateChannelDialogProps = {
   /** Which kind of channel to create, or null when closed. */
-  channelKind: ChannelKind | null;
+  channelKind: CreateChannelKind | null;
   children?: ReactNode;
   description?: string;
   isCreating: boolean;
@@ -45,6 +45,7 @@ export function CreateChannelDialog({
   title,
 }: CreateChannelDialogProps) {
   const open = channelKind !== null;
+  const { goTank } = useAppNavigation();
 
   const form = useCreateChannelForm({
     channelKind: channelKind ?? "stream",
@@ -52,15 +53,23 @@ export function CreateChannelDialog({
     isCreating,
     onCreate: onCreate as (input: CreateChannelInput) => Promise<void>,
     onCreated: () => onOpenChange(false),
+    onTankCreated: (tankId) => {
+      void goTank(tankId);
+    },
   });
 
-  const kindLabel = channelKind === "forum" ? "forum" : "channel";
+  const kindLabel =
+    form.channelKind === "forum"
+      ? "forum"
+      : form.channelKind === "tank"
+        ? "tank"
+        : "channel";
 
   return (
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen && isCreating) return;
+        if (!nextOpen && (isCreating || form.isCreating)) return;
         onOpenChange(nextOpen);
       }}
     >
@@ -71,11 +80,13 @@ export function CreateChannelDialog({
         footerClassName="border-t-0 pt-0"
         headerClassName="pb-2"
         title={title ?? `Create a new ${kindLabel}`}
-        description={
+        headerSubtitle={
           description ??
-          (channelKind === "forum"
+          (form.channelKind === "forum"
             ? "Forums organize threaded discussions around a topic."
-            : "Channels are real-time streams for team conversation.")
+            : form.channelKind === "tank"
+              ? "Tanks are task spaces with a conversation, creatures, and an execution device. Mock data until a real adapter is bound."
+              : "Channels are real-time streams for team conversation.")
         }
         footer={<CreateChannelFormFooter form={form} />}
       >

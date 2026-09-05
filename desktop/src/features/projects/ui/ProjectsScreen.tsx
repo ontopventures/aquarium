@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
+import { AquariumProjectsDashboard } from "@/features/aquarium/ui/ProjectsDashboard";
 import { ProjectsView } from "@/features/projects/ui/ProjectsView";
 
 export function ProjectsScreen() {
@@ -27,6 +28,7 @@ export function ProjectsScreen() {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <AquariumProjectsDashboard />
       <ProjectsView />
     </div>
   );
