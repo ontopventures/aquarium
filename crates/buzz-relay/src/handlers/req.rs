@@ -2190,6 +2190,40 @@ mod tests {
     }
 
     #[test]
+    fn device_request_and_receipt_require_matching_p_tag() {
+        let p_tag = SingleLetterTag::lowercase(Alphabet::P);
+        let authed = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+        for kind in [
+            buzz_core::kind::KIND_DEVICE_REQUEST,
+            buzz_core::kind::KIND_DEVICE_RECEIPT,
+        ] {
+            let missing_p = Filter::new().kind(nostr::Kind::Custom(kind as u16));
+            assert!(
+                !p_gated_filters_authorized(&[missing_p], authed),
+                "kind:{kind} without #p must be denied"
+            );
+
+            let wrong_p = Filter::new()
+                .kind(nostr::Kind::Custom(kind as u16))
+                .custom_tags(p_tag, [other]);
+            assert!(
+                !p_gated_filters_authorized(&[wrong_p], authed),
+                "kind:{kind} with a foreign #p must be denied"
+            );
+
+            let matching_p = Filter::new()
+                .kind(nostr::Kind::Custom(kind as u16))
+                .custom_tags(p_tag, [authed]);
+            assert!(
+                p_gated_filters_authorized(&[matching_p], authed),
+                "kind:{kind} with matching #p must be allowed"
+            );
+        }
+    }
+
+    #[test]
     fn d_tag_pushdown_only_for_nip33_kinds() {
         let d_tag = SingleLetterTag::lowercase(Alphabet::D);
 

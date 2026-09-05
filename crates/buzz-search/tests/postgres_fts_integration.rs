@@ -8,8 +8,8 @@
 
 use buzz_core::{
     kind::{
-        AUTHOR_ONLY_KINDS, KIND_AGENT_TURN_METRIC, KIND_MEMBER_ADDED_NOTIFICATION,
-        KIND_MEMBER_REMOVED_NOTIFICATION, P_GATED_KINDS,
+        AUTHOR_ONLY_KINDS, KIND_AGENT_TURN_METRIC, KIND_DEVICE_RECEIPT, KIND_DEVICE_REQUEST,
+        KIND_MEMBER_ADDED_NOTIFICATION, KIND_MEMBER_REMOVED_NOTIFICATION, P_GATED_KINDS,
     },
     CommunityId,
 };
@@ -30,6 +30,8 @@ const MIGRATION_0008_SQL: &str =
 const MIGRATION_0014_SQL: &str = include_str!("../../../migrations/0014_push_lease_fts.sql");
 const MIGRATION_0033_SQL: &str =
     include_str!("../../../migrations/0033_private_managed_agent_fts.sql");
+const MIGRATION_0045_SQL: &str =
+    include_str!("../../../migrations/0045_device_request_receipt_fts.sql");
 
 async fn setup() -> (PgPool, String) {
     let url = std::env::var("BUZZ_TEST_DATABASE_URL").unwrap_or_else(|_| TEST_DB_URL.to_string());
@@ -86,6 +88,9 @@ async fn setup() -> (PgPool, String) {
     pool.execute(MIGRATION_0033_SQL)
         .await
         .expect("apply 0033 migration");
+    pool.execute(MIGRATION_0045_SQL)
+        .await
+        .expect("apply 0045 migration");
     (pool, schema)
 }
 
@@ -1160,6 +1165,8 @@ async fn very_long_query_is_bounded_before_pg_parse() {
 ///   - 44100 = `KIND_MEMBER_ADDED_NOTIFICATION`  (p-gated membership notice)
 ///   - 44101 = `KIND_MEMBER_REMOVED_NOTIFICATION` (p-gated membership notice)
 ///   - 44200 = `KIND_AGENT_TURN_METRIC` (NIP-AM: p-gated encrypted turn metrics)
+///   - 43200 = `KIND_DEVICE_REQUEST`    (Aquarium NIP-44 command ciphertext)
+///   - 43201 = `KIND_DEVICE_RECEIPT`    (Aquarium NIP-44 receipt ciphertext)
 ///
 /// All seven events are inserted with the same unique token in their content
 /// so a single search query exercises every kind in one round-trip. Only
@@ -1267,6 +1274,32 @@ async fn excluded_kinds_are_storage_level_unsearchable() {
     )
     .await;
 
+    // kind:43200 device request — p-gated NIP-44 ciphertext and MUST NOT be searchable.
+    insert_event(
+        &pool,
+        c,
+        rand_bytes32(),
+        rand_bytes32(),
+        KIND_DEVICE_REQUEST as i32,
+        &format!("device request — {token}"),
+        None,
+        1_700_000_007,
+    )
+    .await;
+
+    // kind:43201 device receipt — p-gated NIP-44 ciphertext and MUST NOT be searchable.
+    insert_event(
+        &pool,
+        c,
+        rand_bytes32(),
+        rand_bytes32(),
+        KIND_DEVICE_RECEIPT as i32,
+        &format!("device receipt — {token}"),
+        None,
+        1_700_000_008,
+    )
+    .await;
+
     let svc = SearchService::new(pool.clone());
     let result = svc
         .search(&SearchQuery {
@@ -1278,7 +1311,7 @@ async fn excluded_kinds_are_storage_level_unsearchable() {
             since: None,
             until: None,
             page: 1,
-            per_page: 10,
+            per_page: 20,
             mode: buzz_search::SearchMode::FullText,
         })
         .await
@@ -1300,6 +1333,8 @@ async fn excluded_kinds_are_storage_level_unsearchable() {
         KIND_MEMBER_ADDED_NOTIFICATION as i32,
         KIND_MEMBER_REMOVED_NOTIFICATION as i32,
         KIND_AGENT_TURN_METRIC as i32,
+        KIND_DEVICE_REQUEST as i32,
+        KIND_DEVICE_RECEIPT as i32,
     ] {
         assert!(
             !kinds.contains(&forbidden),

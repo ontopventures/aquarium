@@ -163,9 +163,9 @@ pub const RESULT_GATED_KINDS: &[u32] = &[KIND_DM_VISIBILITY, KIND_AGENT_TURN_MET
 /// `#p` values exactly equal the authenticated reader's pubkey. For stored
 /// (non-ephemeral) kinds in this set, the storage layer additionally writes a
 /// NULL `search_tsv` so the event is unsearchable through NIP-50 FTS
-/// (`schema/schema.sql` and `migrations/0001_initial_schema.sql` — drift
+/// (`schema/schema.sql` and additive wrap migrations 0014/0033/0045 — drift
 /// caught by `p_gated_persistent_kinds_have_storage_null_tsvector` in
-/// `crates/buzz-search/tests/fts_integration.rs`).
+/// `crates/buzz-search/tests/postgres_fts_integration.rs`).
 ///
 /// Ephemeral kinds (20000–29999, e.g. [`KIND_AGENT_OBSERVER_FRAME`]) are
 /// included for filter-layer enforcement but are never stored, so the
@@ -180,6 +180,12 @@ pub const P_GATED_KINDS: &[u32] = &[
     // readable by any unauthenticated or non-owner party, including via `ids`
     // filters — see NIP-AM §Relay Behavior.
     KIND_AGENT_TURN_METRIC,
+    // Aquarium device command plane: NIP-44 ciphertext. Tags (`d`, `device`,
+    // `op`, `p`) stay plaintext; the filter `#p` gate still stops a community
+    // member from listing every request/receipt. Persistent, so `search_tsv`
+    // must also emit NULL (schema.sql + migration 0045).
+    KIND_DEVICE_REQUEST,
+    KIND_DEVICE_RECEIPT,
 ];
 
 /// NIP-AP: Agent Persona (parameterized replaceable, owner-authored).
