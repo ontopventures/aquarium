@@ -249,7 +249,10 @@ mod tests {
             !production.contains("fn aquarium_linear_secret_get"),
             "renderer must not have a Linear secret getter"
         );
-        let commands = include_str!("aquarium.rs");
+        let commands = include_str!("aquarium.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("device production source");
         assert!(!commands.contains("fn aquarium_linear_secret_get"));
         let handler = include_str!("../lib.rs");
         assert!(
