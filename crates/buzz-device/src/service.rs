@@ -204,6 +204,28 @@ fn reject(
     status: ReceiptStatus,
 ) -> Result<HandleOutcome, DeviceError> {
     let fingerprint = fingerprint_request(request).unwrap_or_else(|_| "invalid".into());
+    if let Ok(Some(existing)) = service.journal.get(&request.request_id) {
+        if matches!(
+            existing.state,
+            RequestState::Succeeded
+                | RequestState::Failed
+                | RequestState::Conflict
+                | RequestState::Uncertain
+                | RequestState::Executing
+        ) {
+            return Ok(HandleOutcome {
+                receipt: DeviceReceipt {
+                    v: request.v,
+                    request_id: request.request_id.clone(),
+                    fingerprint: existing.fingerprint,
+                    status: ReceiptStatus::Rejected,
+                    evidence: serde_json::Value::Null,
+                    error: Some(error.to_string()),
+                },
+                mutated: false,
+            });
+        }
+    }
     let entry = JournalEntry {
         request_id: request.request_id.clone(),
         fingerprint: fingerprint.clone(),

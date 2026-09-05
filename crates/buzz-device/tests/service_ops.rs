@@ -178,6 +178,41 @@ fn different_params_same_id_conflict() {
 }
 
 #[test]
+fn unauthorized_cannot_overwrite_successful_journal() {
+    let (tmp, service, host, owner) = setup();
+    let req = checkout_req("dev-1", "tanks/t1", "aquarium/t1");
+    let ok = handle_request(
+        &service,
+        &owner.public_key().to_hex(),
+        &host.public_key().to_hex(),
+        &req,
+        now_ms(),
+    )
+    .unwrap();
+    assert_eq!(ok.receipt.status, ReceiptStatus::Succeeded);
+    let stranger = Keys::generate();
+    let denied = handle_request(
+        &service,
+        &stranger.public_key().to_hex(),
+        &host.public_key().to_hex(),
+        &req,
+        now_ms(),
+    )
+    .unwrap();
+    assert_eq!(denied.receipt.status, ReceiptStatus::Rejected);
+    let replay = handle_request(
+        &service,
+        &owner.public_key().to_hex(),
+        &host.public_key().to_hex(),
+        &req,
+        now_ms(),
+    )
+    .unwrap();
+    assert_eq!(replay.receipt.status, ReceiptStatus::Succeeded);
+    assert!(tmp.path().join("tanks/t1/README").exists());
+}
+
+#[test]
 fn unauthorized_actor_does_not_mutate() {
     let (tmp, service, host, _owner) = setup();
     let stranger = Keys::generate();
@@ -213,7 +248,7 @@ fn wrong_device_pubkey_does_not_mutate() {
 
 #[test]
 fn path_escape_is_rejected() {
-    let (_tmp, service, host, owner) = setup();
+    let (tmp, service, host, owner) = setup();
     let mut req = checkout_req("dev-1", "../escape", "aquarium/escape");
     req.request_id = request_id();
     let outcome = handle_request(
@@ -225,6 +260,8 @@ fn path_escape_is_rejected() {
     )
     .unwrap();
     assert_ne!(outcome.receipt.status, ReceiptStatus::Succeeded);
+    assert!(!outcome.mutated);
+    assert!(!tmp.path().join("tanks").exists());
 }
 
 #[test]

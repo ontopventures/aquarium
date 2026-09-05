@@ -312,6 +312,9 @@ async fn ctl(
                 if u32::from(event.kind.as_u16()) != KIND_DEVICE_RECEIPT {
                     continue;
                 }
+                if event.pubkey != device_pk {
+                    continue;
+                }
                 if let Ok(receipt) = decrypt_receipt(&keys, &event) {
                     if receipt.request_id == request.request_id {
                         println!("{}", serde_json::to_string_pretty(&receipt)?);
