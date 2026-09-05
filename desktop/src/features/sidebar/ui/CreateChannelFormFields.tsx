@@ -24,7 +24,10 @@ import {
 } from "@/features/channels/ui/channelFormStyles";
 import { ChannelPermissionsSettings } from "@/features/channels/ui/ChannelPermissionsSettings";
 import { ChannelTypeSettings } from "@/features/channels/ui/ChannelTypeSettings";
-import type { CreateChannelFormState } from "@/features/sidebar/lib/useCreateChannelForm";
+import type {
+  CreateChannelFormState,
+  CreateChannelKind,
+} from "@/features/sidebar/lib/useCreateChannelForm";
 
 const CREATE_LABEL_OPTIONAL_CLASS =
   "ml-1 text-xs font-normal text-muted-foreground/50";
@@ -45,10 +48,16 @@ export function CreateChannelFormFields({
 }) {
   const { channelKind, kindLabel, isCreating, allowTankKind } = form;
   const isTank = channelKind === "tank";
-  const kindOptions = [
+  const kindOptions: {
+    value: CreateChannelKind;
+    label: string;
+    Icon: typeof Hash;
+  }[] = [
     { value: "stream", label: "Channel", Icon: Hash },
     { value: "forum", label: "Forum", Icon: MessagesSquare },
-    ...(allowTankKind ? [{ value: "tank", label: "Tank", Icon: Fish }] : []),
+    ...(allowTankKind
+      ? [{ value: "tank" as const, label: "Tank", Icon: Fish }]
+      : []),
   ];
   const [isCreateTemplateOpen, setIsCreateTemplateOpen] = React.useState(false);
   const selectedTemplate = form.templates.find(
