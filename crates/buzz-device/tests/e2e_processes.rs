@@ -240,3 +240,89 @@ fn missing_device_pubkey_is_a_cli_error() {
         .unwrap();
     assert!(!out.status.success());
 }
+
+#[test]
+fn coord_leader_worker_through_mux_is_fixture_transport() {
+    let bin = env!("CARGO_BIN_EXE_buzz-device");
+    let tmp = tempfile::tempdir().unwrap();
+    let tank = tmp.path();
+    let leader = Keys::generate();
+    let worker = Keys::generate();
+    let leader_nsec = tmp.path().join("leader.nsec");
+    let worker_nsec = tmp.path().join("worker.nsec");
+    std::fs::write(&leader_nsec, leader.secret_key().to_bech32().unwrap()).unwrap();
+    std::fs::write(&worker_nsec, worker.secret_key().to_bech32().unwrap()).unwrap();
+
+    let mut mux = Command::new(bin)
+        .args(["mux", "--bind", "127.0.0.1:0"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let addr = wait_line(&mut mux, Duration::from_secs(5));
+    let relay = format!("ws://{addr}");
+    let conversation = "00000000-0000-4000-8000-000000000001";
+    let assignment = "1788581600001-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    let mut worker_proc = Command::new(bin)
+        .args([
+            "coord-worker",
+            "--nsec-file",
+            worker_nsec.to_str().unwrap(),
+            "--leader-pubkey",
+            &leader.public_key().to_hex(),
+            "--conversation-id",
+            conversation,
+            "--tank-id",
+            "tank-coord",
+            "--relay",
+            &relay,
+            "--state-dir",
+            tmp.path().join("wstate").to_str().unwrap(),
+            "--cwd",
+            tank.to_str().unwrap(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+
+    let leader_out = Command::new(bin)
+        .args([
+            "coord-leader",
+            "--nsec-file",
+            leader_nsec.to_str().unwrap(),
+            "--worker-pubkey",
+            &worker.public_key().to_hex(),
+            "--conversation-id",
+            conversation,
+            "--tank-id",
+            "tank-coord",
+            "--task",
+            "write-hello",
+            "--relay",
+            &relay,
+            "--state-dir",
+            tmp.path().join("lstate").to_str().unwrap(),
+            "--cwd",
+            tank.to_str().unwrap(),
+            "--assignment-id",
+            assignment,
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&leader_out.stdout);
+    let stderr = String::from_utf8_lossy(&leader_out.stderr);
+    assert!(
+        leader_out.status.success(),
+        "coord-leader failed: {stderr} {stdout}"
+    );
+    assert!(stdout.contains("continued"));
+    assert!(tank.join(format!("COORD-{assignment}.txt")).exists());
+    assert!(tank.join(format!("CONTINUE-{assignment}.txt")).exists());
+    let _ = worker_proc.kill();
+    let _ = worker_proc.wait();
+    let _ = mux.kill();
+    let _ = mux.wait();
+}

@@ -7,6 +7,8 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+mod adapter;
+mod coord;
 mod git_checkout;
 mod journal;
 mod mux;
@@ -15,6 +17,14 @@ mod service;
 mod session;
 mod wire;
 
+pub use adapter::{
+    capabilities_from_inspect_evidence, op_result_from_receipt, AdapterSource, DeviceCapabilities,
+    DeviceOpResult,
+};
+pub use coord::{
+    coord_filter, handle_coord, parse_coord_event, publish_coord, CoordBind, CoordJournal,
+    CoordMessage,
+};
 pub use git_checkout::{create_worktree, list_worktrees, CheckoutEvidence};
 pub use journal::{Journal, JournalEntry, RequestState};
 pub use mux::{bind_local, run_mux, run_mux_listener};

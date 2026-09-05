@@ -9,6 +9,8 @@
 pub mod agent_turn_metric;
 /// Channel and membership enums shared across crates.
 pub mod channel;
+/// Same-tank creature coordination (assignment identity, peer auth, limits).
+pub mod coord;
 /// Aquarium device-command protocol types (kinds, request ids, fingerprints).
 pub mod device;
 /// NIP-AE Agent Engrams — slug grammar, conversation key, d-tag derivation,

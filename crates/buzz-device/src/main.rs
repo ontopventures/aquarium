@@ -3,12 +3,14 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use buzz_core::coord::{CoordPeers, CoordPhase, CoordStatus, COORD_PROTOCOL_VERSION};
 use buzz_core::device::DEVICE_PROTOCOL_VERSION;
 use buzz_core::kind::{KIND_DEVICE_RECEIPT, KIND_DEVICE_REQUEST};
 use buzz_device::{
-    decrypt_receipt, decrypt_request, fingerprint_request, generate_request_id, handle_request,
-    publish_advertisement, publish_receipt, publish_request, run_agent_fixture, run_mux,
-    run_mux_listener, DeviceReceipt, DeviceRequest, DeviceService, GrantFile, HandleOutcome,
+    coord_filter, decrypt_receipt, decrypt_request, fingerprint_request, generate_request_id,
+    handle_coord, handle_request, parse_coord_event, publish_advertisement, publish_coord,
+    publish_receipt, publish_request, run_agent_fixture, run_mux, run_mux_listener, CoordBind,
+    CoordJournal, DeviceReceipt, DeviceRequest, DeviceService, GrantFile, HandleOutcome,
     ReceiptStatus,
 };
 use buzz_ws_client::{NostrWsConnection, RelayMessage};
@@ -83,6 +85,44 @@ enum Commands {
         #[arg(long)]
         nsec_file: PathBuf,
     },
+    /// Leader: delegate a bounded same-tank assignment and continue after the result.
+    CoordLeader {
+        #[arg(long)]
+        nsec_file: PathBuf,
+        #[arg(long)]
+        worker_pubkey: String,
+        #[arg(long)]
+        conversation_id: String,
+        #[arg(long)]
+        tank_id: String,
+        #[arg(long)]
+        task: String,
+        #[arg(long)]
+        relay: String,
+        #[arg(long)]
+        state_dir: PathBuf,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        assignment_id: Option<String>,
+    },
+    /// Worker: ack, perform bounded work in cwd, report result. YOLO does not skip peer auth.
+    CoordWorker {
+        #[arg(long)]
+        nsec_file: PathBuf,
+        #[arg(long)]
+        leader_pubkey: String,
+        #[arg(long)]
+        conversation_id: String,
+        #[arg(long)]
+        tank_id: String,
+        #[arg(long)]
+        relay: String,
+        #[arg(long)]
+        state_dir: PathBuf,
+        #[arg(long)]
+        cwd: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -154,6 +194,50 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 run_mux(addr).await?;
             }
             Ok(())
+        }
+        Commands::CoordLeader {
+            nsec_file,
+            worker_pubkey,
+            conversation_id,
+            tank_id,
+            task,
+            relay,
+            state_dir,
+            cwd,
+            assignment_id,
+        } => {
+            coord_leader(
+                nsec_file,
+                worker_pubkey,
+                conversation_id,
+                tank_id,
+                task,
+                relay,
+                state_dir,
+                cwd,
+                assignment_id,
+            )
+            .await
+        }
+        Commands::CoordWorker {
+            nsec_file,
+            leader_pubkey,
+            conversation_id,
+            tank_id,
+            relay,
+            state_dir,
+            cwd,
+        } => {
+            coord_worker(
+                nsec_file,
+                leader_pubkey,
+                conversation_id,
+                tank_id,
+                relay,
+                state_dir,
+                cwd,
+            )
+            .await
         }
         Commands::Serve {
             state_dir,
@@ -368,6 +452,212 @@ async fn ctl(
             other => tracing::debug!("ctl ignored {other:?}"),
         }
     }
+}
+
+async fn coord_leader(
+    nsec_file: PathBuf,
+    worker_pubkey: String,
+    conversation_id: String,
+    tank_id: String,
+    task: String,
+    relay: String,
+    state_dir: PathBuf,
+    cwd: PathBuf,
+    assignment_id: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let keys = load_keys(&nsec_file)?;
+    let worker_pk = PublicKey::from_hex(worker_pubkey.trim())?;
+    let assignment_id = assignment_id.unwrap_or_else(generate_request_id);
+    let journal = CoordJournal::open(&state_dir)?;
+    let peers = CoordPeers {
+        leader_pubkey_hex: keys.public_key().to_hex(),
+        worker_pubkey_hex: worker_pk.to_hex(),
+    };
+    let bind = CoordBind {
+        self_pubkey_hex: keys.public_key().to_hex(),
+        conversation_id: conversation_id.clone(),
+        tank_id: tank_id.clone(),
+    };
+    let mut conn = NostrWsConnection::connect_authenticated(&relay, &keys, None).await?;
+    conn.send_raw(&json!([
+        "REQ",
+        "coord-in",
+        coord_filter(keys.public_key(), &conversation_id)
+    ]))
+    .await?;
+    let body = json!({
+        "v": COORD_PROTOCOL_VERSION,
+        "assignment_id": assignment_id,
+        "task": task,
+        "hops": 0,
+    });
+    let event = publish_coord(
+        &keys,
+        &worker_pk,
+        &conversation_id,
+        &tank_id,
+        &assignment_id,
+        CoordPhase::Delegate,
+        &body,
+    )?;
+    conn.send_event(event).await?;
+    let mut saw_ack = false;
+    let mut saw_result = false;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline && !(saw_ack && saw_result) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match conn.next_event(remaining).await? {
+            RelayMessage::Event { event, .. } => {
+                let Some(message) = parse_coord_event(&event) else {
+                    continue;
+                };
+                if message.assignment_id != assignment_id {
+                    continue;
+                }
+                let (status, _) =
+                    handle_coord(&journal, &peers, &bind, &message, Some(&cwd), Some(&cwd))?;
+                match message.phase {
+                    CoordPhase::Ack if status == CoordStatus::Succeeded => saw_ack = true,
+                    CoordPhase::Result if status == CoordStatus::Succeeded => saw_result = true,
+                    _ => {}
+                }
+            }
+            RelayMessage::Eose { .. } => {}
+            _ => {}
+        }
+    }
+    if !saw_result {
+        return Err("timed out waiting for worker succeeded result; not looping".into());
+    }
+    let cont = json!({
+        "v": COORD_PROTOCOL_VERSION,
+        "assignment_id": assignment_id,
+        "task": task,
+        "hops": 0,
+        "status": "succeeded",
+    });
+    let continue_msg = publish_coord(
+        &keys,
+        &worker_pk,
+        &conversation_id,
+        &tank_id,
+        &assignment_id,
+        CoordPhase::Continue,
+        &cont,
+    )?;
+    if let Some(parsed) = parse_coord_event(&continue_msg) {
+        handle_coord(&journal, &peers, &bind, &parsed, Some(&cwd), Some(&cwd))?;
+    }
+    conn.send_event(continue_msg).await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "assignment_id": assignment_id,
+            "status": "succeeded",
+            "continued": true,
+        }))?
+    );
+    Ok(())
+}
+
+async fn coord_worker(
+    nsec_file: PathBuf,
+    leader_pubkey: String,
+    conversation_id: String,
+    tank_id: String,
+    relay: String,
+    state_dir: PathBuf,
+    cwd: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let keys = load_keys(&nsec_file)?;
+    let leader_pk = PublicKey::from_hex(leader_pubkey.trim())?;
+    let journal = CoordJournal::open(&state_dir)?;
+    let peers = CoordPeers {
+        leader_pubkey_hex: leader_pk.to_hex(),
+        worker_pubkey_hex: keys.public_key().to_hex(),
+    };
+    let bind = CoordBind {
+        self_pubkey_hex: keys.public_key().to_hex(),
+        conversation_id: conversation_id.clone(),
+        tank_id: tank_id.clone(),
+    };
+    let mut conn = NostrWsConnection::connect_authenticated(&relay, &keys, None).await?;
+    conn.send_raw(&json!([
+        "REQ",
+        "coord-in",
+        coord_filter(keys.public_key(), &conversation_id)
+    ]))
+    .await?;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match conn.next_event(remaining).await? {
+            RelayMessage::Event { event, .. } => {
+                let Some(message) = parse_coord_event(&event) else {
+                    continue;
+                };
+                if message.phase != CoordPhase::Delegate {
+                    continue;
+                }
+                let (status, _) =
+                    handle_coord(&journal, &peers, &bind, &message, Some(&cwd), Some(&cwd))?;
+                if status == CoordStatus::Rejected {
+                    continue;
+                }
+                let task = message
+                    .body
+                    .get("task")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let ack = publish_coord(
+                    &keys,
+                    &leader_pk,
+                    &conversation_id,
+                    &tank_id,
+                    &message.assignment_id,
+                    CoordPhase::Ack,
+                    &json!({
+                        "v": COORD_PROTOCOL_VERSION,
+                        "assignment_id": message.assignment_id,
+                        "task": task,
+                        "hops": 0,
+                    }),
+                )?;
+                conn.send_event(ack).await?;
+                let result_body = json!({
+                    "v": COORD_PROTOCOL_VERSION,
+                    "assignment_id": message.assignment_id,
+                    "task": task,
+                    "hops": 0,
+                    "status": "succeeded",
+                });
+                let result_event = publish_coord(
+                    &keys,
+                    &leader_pk,
+                    &conversation_id,
+                    &tank_id,
+                    &message.assignment_id,
+                    CoordPhase::Result,
+                    &result_body,
+                )?;
+                if let Some(parsed) = parse_coord_event(&result_event) {
+                    handle_coord(&journal, &peers, &bind, &parsed, Some(&cwd), Some(&cwd))?;
+                }
+                conn.send_event(result_event).await?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "assignment_id": message.assignment_id,
+                        "status": "succeeded",
+                    }))?
+                );
+                return Ok(());
+            }
+            RelayMessage::Eose { .. } => {}
+            _ => {}
+        }
+    }
+    Err("timed out waiting for leader assignment; not looping".into())
 }
 
 fn load_keys(path: &PathBuf) -> Result<Keys, Box<dyn std::error::Error>> {
